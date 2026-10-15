@@ -6,13 +6,13 @@ import "./globals.css";
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
 
 export const metadata: Metadata = {
-  title: "Aponk Red",
-  description: "Point of sale for Arowana fish store",
+  title: "PuntoBase",
+  description: "Plataforma PWA para la gestión de pequeños negocios",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Aponk Red",
+    title: "PuntoBase",
   },
 };
 
@@ -26,7 +26,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${geist.variable} h-full`}>
+    <html lang="es" className={`${geist.variable} h-full`}>
       <head>
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
