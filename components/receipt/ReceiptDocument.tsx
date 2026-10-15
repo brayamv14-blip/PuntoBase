@@ -4,7 +4,7 @@ import { formatCurrency, formatDateTime } from "@/lib/utils";
 import type { Sale } from "@/types";
 
 const styles = StyleSheet.create({
-  page: { fontFamily: "Helvetica", fontSize: 9, padding: 16, width: 226 }, // ~80mm
+  page: { fontFamily: "Helvetica", fontSize: 9, padding: 16, width: 226 }, // ~80 mm
   center: { textAlign: "center" },
   bold: { fontFamily: "Helvetica-Bold" },
   row: { flexDirection: "row", justifyContent: "space-between", marginBottom: 2 },
@@ -28,18 +28,18 @@ export function ReceiptDocument({ sale, storeName }: { sale: Sale & { items: { d
 
         <View style={styles.divider} />
         <View style={styles.row}>
-          <Text style={styles.bold}>Receipt #</Text>
+          <Text style={styles.bold}>Ticket n.º</Text>
           <Text>{sale.sale_number}</Text>
         </View>
         {sale.device && (
           <View style={styles.row}>
-            <Text>Cashier</Text>
+            <Text>Cajero</Text>
             <Text>{(sale.device as { name: string }).name}</Text>
           </View>
         )}
         {sale.customer && (
           <View style={styles.row}>
-            <Text>Customer</Text>
+            <Text>Cliente</Text>
             <Text>{(sale.customer as { name: string }).name}</Text>
           </View>
         )}
@@ -62,7 +62,7 @@ export function ReceiptDocument({ sale, storeName }: { sale: Sale & { items: { d
         </View>
         {discountAmount > 0 && (
           <View style={styles.row}>
-            <Text>Discount{sale.discount_type === "percent" ? ` (${sale.discount_value}%)` : ""}</Text>
+            <Text>Descuento{sale.discount_type === "percent" ? ` (${sale.discount_value}%)` : ""}</Text>
             <Text>-{formatCurrency(discountAmount)}</Text>
           </View>
         )}
@@ -71,11 +71,11 @@ export function ReceiptDocument({ sale, storeName }: { sale: Sale & { items: { d
           <Text style={styles.total}>{formatCurrency(Number(sale.total))}</Text>
         </View>
         <View style={styles.row}>
-          <Text>Payment</Text>
-          <Text>{sale.payment_method === "cash" ? "Cash" : "Bank Transfer"}</Text>
+          <Text>Forma de pago</Text>
+          <Text>{sale.payment_method === "cash" ? "Efectivo" : "Transferencia bancaria"}</Text>
         </View>
         <View style={styles.divider} />
-        <Text style={styles.center}>Thank you!</Text>
+        <Text style={styles.center}>¡Gracias por tu compra!</Text>
       </Page>
     </Document>
   );

@@ -26,7 +26,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const element = createElement(ReceiptDocument, {
     sale: sale as Parameters<typeof ReceiptDocument>[0]["sale"],
-    storeName: config?.store_name ?? "Arowana Store",
+    storeName: config?.store_name ?? "PuntoBase",
   }) as ReactElement<DocumentProps>;
 
   const pdfBuffer = await renderToBuffer(element);

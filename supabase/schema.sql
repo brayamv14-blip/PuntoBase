@@ -6,7 +6,7 @@
 -- Store config (singleton)
 CREATE TABLE IF NOT EXISTS store_config (
   id               integer PRIMARY KEY DEFAULT 1,
-  store_name       text NOT NULL DEFAULT 'Aponk Red',
+  store_name       text NOT NULL DEFAULT 'PuntoBase',
   access_code      text NOT NULL,
   setup_complete   boolean NOT NULL DEFAULT false,
   updated_at       timestamptz NOT NULL DEFAULT now(),

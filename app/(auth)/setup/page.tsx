@@ -53,7 +53,7 @@ export default function SetupPage() {
     <div className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 p-6">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border p-6 space-y-6">
         <div className="text-center">
-          <h1 className="text-2xl font-bold">Arowana POS</h1>
+          <h1 className="text-2xl font-bold">PuntoBase</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {isFirstSetup ? "First-time store configuration" : "Register this device"}
           </p>

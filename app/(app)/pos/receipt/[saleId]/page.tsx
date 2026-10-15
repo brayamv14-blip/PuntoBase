@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import type { Sale, SaleItem, Customer, Device } from "@/types";
@@ -13,7 +14,7 @@ export default function ReceiptPage() {
   const { saleId } = useParams<{ saleId: string }>();
   const router = useRouter();
   const [sale, setSale] = useState<FullSale | null>(null);
-  const [storeName, setStoreName] = useState("Arowana Store");
+  const [storeName, setStoreName] = useState("PuntoBase");
 
   useEffect(() => {
     Promise.all([
@@ -21,9 +22,16 @@ export default function ReceiptPage() {
       apiFetch("/api/store-config").then((r) => r.json()),
     ]).then(([saleData, config]) => {
       setSale(saleData);
-      setStoreName(config.store_name ?? "Arowana Store");
+      setStoreName(config.store_name ?? "PuntoBase");
     });
   }, [saleId]);
+
+  async function confirmPayment() {
+    const res = await apiFetch(`/api/sales/${saleId}/confirm-payment`, { method: "POST" });
+    if (!res.ok) return toast.error("No se pudo confirmar el pago");
+    setSale((s) => (s ? { ...s, payment_status: "paid", paid_at: new Date().toISOString() } : s));
+    toast.success("Pago confirmado");
+  }
 
   if (!sale) return <div className="p-6 text-center text-muted-foreground">Loading receipt…</div>;
 
@@ -90,6 +98,12 @@ export default function ReceiptPage() {
             <span>Total</span>
             <span>{formatCurrency(Number(sale.total))}</span>
           </div>
+          {sale.payment_status === "pending" && (
+            <div className="flex justify-between text-amber-600 font-medium">
+              <span>Estado</span>
+              <span>Transferencia pendiente</span>
+            </div>
+          )}
           <div className="flex justify-between text-muted-foreground">
             <span>Payment</span>
             <Badge variant="outline" className="font-normal">
@@ -118,6 +132,12 @@ export default function ReceiptPage() {
           Print
         </Button>
       </div>
+
+      {sale.payment_status === "pending" && (
+        <Button className="w-full bg-green-600 hover:bg-green-700" onClick={confirmPayment}>
+          Confirmar pago
+        </Button>
+      )}
 
       <Button className="w-full" onClick={() => router.push("/pos")}>
         New Sale

@@ -42,6 +42,7 @@ export interface Product {
   price: number | null;       // always null — price lives on product_variants
   stock_qty: number | null;   // always null — stock lives on product_variants
   low_stock_threshold: number;
+  barcode: string | null;
   track_stock: boolean;
   is_active: boolean;
   created_at: string;
@@ -79,6 +80,7 @@ export interface Customer {
 
 export type PaymentMethod = 'cash' | 'bank_transfer';
 export type DiscountType = 'flat' | 'percent';
+export type PaymentStatus = 'paid' | 'pending';
 
 export interface Sale {
   id: string;
@@ -90,6 +92,8 @@ export interface Sale {
   subtotal: number;
   total: number;
   payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  paid_at: string | null;
   notes: string | null;
   created_at: string;
   // Joined
@@ -98,13 +102,12 @@ export interface Sale {
   items?: SaleItem[];
 }
 
-export type SaleItemType = 'fish' | 'product';
+export type SaleItemType = 'product';
 
 export interface SaleItem {
   id: string;
   sale_id: string;
   item_type: SaleItemType;
-  fish_id: string | null;
   product_id: string | null;
   variant_id: string | null;
   description: string;
@@ -117,9 +120,8 @@ export interface SaleItem {
 // ─── Cart (client-only) ───────────────────────────────────────────────────────
 
 export interface CartItem {
-  key: string; // unique key: fish_id or product_id+variant_id
+  key: string; // unique key: product_id+variant_id
   item_type: SaleItemType;
-  fish_id?: string;
   product_id?: string;
   variant_id?: string;
   category_name?: string;
@@ -181,7 +183,6 @@ export interface CashRegister {
 export interface CreateSaleRequest {
   items: {
     item_type: SaleItemType;
-    fish_id?: string;
     product_id?: string;
     variant_id?: string;
     description: string;

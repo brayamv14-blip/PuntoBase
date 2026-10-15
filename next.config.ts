@@ -11,7 +11,7 @@ const withPWA = withPWAInit({
     disableDevLogs: true,
     runtimeCaching: [
       {
-        urlPattern: /^\/api\/(fish|products|categories|customers)/,
+        urlPattern: /^\/api\/(products|categories|customers)/,
         handler: "StaleWhileRevalidate",
         options: {
           cacheName: "api-cache",
@@ -25,7 +25,7 @@ const withPWA = withPWAInit({
 const nextConfig: NextConfig = {
   serverExternalPackages: ["@react-pdf/renderer"],
   turbopack: {},
-  allowedDevOrigins: ["192.168.0.33", "192.168.0.148", "192.168.1.6"],
+allowedDevOrigins: ["192.168.1.89"],
 };
 
 export default withPWA(nextConfig);

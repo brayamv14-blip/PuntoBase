@@ -1,12 +1,12 @@
 {
-  "name": "Aponk Red",
-  "short_name": "Aponk Red",
-  "description": "Point of sale and inventory for Arowana fish store",
+  "name": "PuntoBase",
+  "short_name": "PuntoBase",
+  "description": "Inventario con QR, ventas y corte de caja para pequeños negocios",
   "start_url": "/pos",
   "display": "standalone",
   "orientation": "portrait",
-  "theme_color": "#18181b",
-  "background_color": "#ffffff",
+  "theme_color": "#E4572E",
+  "background_color": "#EFE6DD",
   "icons": [
     {
       "src": "/icons/icon-192.png",

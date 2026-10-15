@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const { name, category_id, track_stock, price, stock_qty, low_stock_threshold } = body;
+    const { name, category_id, track_stock, price, stock_qty, low_stock_threshold, barcode } = body;
 
     if (!name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
 
@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
       .insert({
         name: name.trim(),
         category_id: category_id || null,
+        barcode: barcode?.trim() || null,
         track_stock: track_stock ?? true,
         price: null,
         stock_qty: null,

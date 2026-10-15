@@ -20,12 +20,12 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/pos", label: "POS", icon: ShoppingCart },
-  { href: "/products", label: "Stocks", icon: Package },
-  { href: "/expenses", label: "Expenses", icon: Wallet },
-  { href: "/eod", label: "Cash EOD", icon: Banknote },
-  { href: "/reports", label: "Reports", icon: BarChart2 },
+  { href: "/dashboard", label: "Inicio", icon: LayoutDashboard },
+  { href: "/pos", label: "Punto de venta", icon: ShoppingCart },
+  { href: "/products", label: "Inventario", icon: Package },
+  { href: "/expenses", label: "Gastos", icon: Wallet },
+  { href: "/eod", label: "Cierre de caja", icon: Banknote },
+  { href: "/reports", label: "Reportes", icon: BarChart2 },
 ];
 
 export function BottomNav() {

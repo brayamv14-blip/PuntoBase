@@ -17,7 +17,7 @@ export function OfflineBanner() {
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-400 text-yellow-900 text-center text-xs font-semibold py-1 px-2">
-      Offline — cash sales will sync when reconnected
+      Sin conexión — las ventas en efectivo se sincronizarán al recuperar la conexión.
     </div>
   );
 }

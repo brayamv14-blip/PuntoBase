@@ -1,4 +1,4 @@
-# Aponk Red — Arowana Store POS
+# PuntoBase — Plataforma PWA para la Gestión de Pequeños Negocios
 
 A point-of-sale and stock management system built for an arowana fish store. Runs as a PWA (Progressive Web App) installable on Android and iOS.
 
@@ -56,3 +56,21 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 npm install
 npm run dev
 ```
+
+
+---
+
+## Créditos y cambios (PuntoBase)
+
+Proyecto escolar de *Aplicaciones Web Progresivas* (UTFV, prof. Sandra Alfaro Linares).
+Parte de una base de código de terceros: [ardiChuan/POS-StockManagement](https://github.com/ardiChuan/POS-StockManagement)
+(el repositorio original no declara licencia; se usa como punto de partida con conocimiento de la profesora).
+
+Cambios del equipo sobre la base:
+- Marca y manifest PuntoBase; se eliminó el módulo de peces (`fish`).
+- Escáner con cámara (`html5-qrcode`) en el formulario de producto y en la búsqueda de inventario.
+- Semáforo de inventario verde / amarillo / rojo (`lib/stock-status.ts`).
+- Estado de pago: las transferencias quedan como *Transferencia pendiente* y se consolidan con *Confirmar pago*.
+- Migración SQL: `supabase/puntobase-migration.sql` (ejecutar después de `schema.sql`).
+
+Pendiente del equipo: cola offline completa con Dexie (hoy solo ventas en efectivo con `idb`), Background Sync API, dashboard con gráficas, pruebas con Lighthouse.

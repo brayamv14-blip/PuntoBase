@@ -40,7 +40,6 @@ function cartReducer(state: CartState, action: CartAction): CartState {
     case "ADD_ITEM": {
       const existing = state.items.find((i) => i.key === action.item.key);
       if (existing) {
-        if (action.item.item_type === "fish") return state;
         return {
           ...state,
           items: state.items.map((i) =>

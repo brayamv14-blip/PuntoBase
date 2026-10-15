@@ -56,19 +56,6 @@ export async function POST(req: NextRequest) {
       resolvedCustomerId = newCustomer?.id ?? null;
     }
 
-    // ── 2. Validate fish availability ────────────────────────────────────────
-    const fishItems = items.filter((i) => i.item_type === "fish");
-    for (const fi of fishItems) {
-      const { data: fish } = await supabase
-        .from("fish")
-        .select("status")
-        .eq("id", fi.fish_id!)
-        .single();
-      if (!fish || fish.status !== "available") {
-        return NextResponse.json({ error: `Fish ${fi.description} is no longer available` }, { status: 409 });
-      }
-    }
-
     // ── 3. Validate product/variant stock (skip untracked) ─────────────────
     const productItems = items.filter((i) => i.item_type === "product");
     for (const pi of productItems) {
@@ -119,6 +106,8 @@ export async function POST(req: NextRequest) {
         subtotal,
         total,
         payment_method: payment_method as PaymentMethod,
+        payment_status: payment_method === "cash" ? "paid" : "pending",
+        paid_at: payment_method === "cash" ? new Date().toISOString() : null,
         notes: notes?.trim() || null,
       })
       .select()
@@ -139,6 +128,8 @@ export async function POST(req: NextRequest) {
             subtotal,
             total,
             payment_method: payment_method as PaymentMethod,
+        payment_status: payment_method === "cash" ? "paid" : "pending",
+        paid_at: payment_method === "cash" ? new Date().toISOString() : null,
             notes: notes?.trim() || null,
           })
           .select()
@@ -165,7 +156,6 @@ async function processSaleItems(sale: { id: string; payment_method: string }, it
     const saleItemRows = items.map((i) => ({
       sale_id: sale.id,
       item_type: i.item_type,
-      fish_id: i.fish_id ?? null,
       product_id: i.product_id ?? null,
       variant_id: i.variant_id ?? null,
       description: i.description,
@@ -179,25 +169,6 @@ async function processSaleItems(sale: { id: string; payment_method: string }, it
     rollbacks.push(async () => {
       await supabase.from("sale_items").delete().eq("sale_id", sale.id);
     });
-
-    // ── 8. Mark fish as sold ───────────────────────────────────────────────
-    const fishItems = items.filter((i) => i.item_type === "fish");
-    const soldFishIds: string[] = [];
-    for (const fi of fishItems) {
-      const { error } = await supabase
-        .from("fish")
-        .update({ status: "sold", sold_at: now, updated_at: now })
-        .eq("id", fi.fish_id!);
-      if (error) throw error;
-      soldFishIds.push(fi.fish_id!);
-    }
-    if (soldFishIds.length > 0) {
-      rollbacks.push(async () => {
-        for (const fishId of soldFishIds) {
-          await supabase.from("fish").update({ status: "available", sold_at: null, updated_at: now }).eq("id", fishId);
-        }
-      });
-    }
 
     // ── 9. Deduct variant stock + log adjustments (skip untracked) ────────
     const productItems = items.filter((i) => i.item_type === "product");

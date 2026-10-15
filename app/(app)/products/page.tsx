@@ -2,6 +2,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ScannerButton } from "@/components/scanner/Scanner";
+import { getStockStatus, STOCK_STATUS_STYLE } from "@/lib/stock-status";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
@@ -88,9 +90,19 @@ export default function ProductsPage() {
   }
 
   function getStockBadge(stock: number, threshold: number) {
-    if (stock === 0) return <span className="text-xs font-medium text-red-500">{stock} Pcs</span>;
-    if (stock <= threshold) return <span className="text-xs font-medium text-amber-500">{stock} Pcs</span>;
-    return <span className="text-xs text-muted-foreground">{stock} Pcs</span>;
+    const st = STOCK_STATUS_STYLE[getStockStatus(stock, threshold)];
+    return (
+      <span className={`inline-flex items-center justify-end gap-1 text-xs font-medium ${st.text}`} title={st.label}>
+        <span className={`h-2 w-2 rounded-full ${st.dot}`} />
+        {stock} Pcs
+      </span>
+    );
+  }
+
+  function handleScan(code: string) {
+    const match = products.find((p) => p.barcode === code);
+    if (match) { setSearch(match.name); toast.success(`Encontrado: ${match.name}`); }
+    else { setSearch(code); toast.error("Código no registrado en el inventario"); }
   }
 
   async function saveCatRename(id: string) {
@@ -146,6 +158,7 @@ export default function ProductsPage() {
 
       {/* Search + Category filter */}
       <div className="flex gap-2">
+        <ScannerButton onScan={handleScan} />
         <Input
           placeholder="Search products…"
           value={search}

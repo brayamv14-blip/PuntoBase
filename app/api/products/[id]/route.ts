@@ -24,13 +24,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const { id } = await params;
     const body = await req.json();
-    const { name, category_id, track_stock, price, stock_qty, low_stock_threshold } = body;
+    const { name, category_id, track_stock, price, stock_qty, low_stock_threshold, barcode } = body;
 
     const { data, error } = await supabase
       .from("products")
       .update({
         name: name?.trim(),
         category_id: category_id ?? null,
+        barcode: barcode?.trim() || null,
         track_stock: track_stock ?? true,
         low_stock_threshold: low_stock_threshold ?? 5,
         updated_at: new Date().toISOString(),
