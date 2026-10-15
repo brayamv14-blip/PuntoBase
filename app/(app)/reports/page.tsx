@@ -1,16 +1,38 @@
 "use client";
+
 import { useState, useEffect, useCallback } from "react";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ChevronDown,
+  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
-import { formatCurrency, formatDateTime, todayDateString, cn } from "@/lib/utils";
+import {
+  formatCurrency,
+  formatDateTime,
+  todayDateString,
+  cn,
+} from "@/lib/utils";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Tipos ─────────────────────────────────────────────────────────────────────
 
 interface SaleItem {
   id: string;
@@ -50,7 +72,7 @@ interface AdjustmentRow {
   variant: { size_label: string } | null;
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Componente principal ──────────────────────────────────────────────────────
 
 export default function ReportsPage() {
   const today = todayDateString();
@@ -62,21 +84,32 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
 
   const [salesSearch, setSalesSearch] = useState("");
-  const [paymentFilter, setPaymentFilter] = useState<"all" | "cash" | "bank_transfer">("all");
+  const [paymentFilter, setPaymentFilter] = useState<
+    "all" | "cash" | "bank_transfer"
+  >("all");
   const [expenseSearch, setExpenseSearch] = useState("");
   const [stockSearch, setStockSearch] = useState("");
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
+
     const fromISO = `${date}T00:00:00.000Z`;
-    const toISO   = `${date}T23:59:59.999Z`;
+    const toISO = `${date}T23:59:59.999Z`;
+
     try {
       const [salesRes, expRes, adjRes] = await Promise.all([
-        apiFetch(`/api/sales?from=${fromISO}&to=${toISO}&limit=200`).then(r => r.json()),
-        apiFetch(`/api/reports/expenses?from=${date}&to=${date}`).then(r => r.json()),
-        apiFetch(`/api/stock/adjustments?from=${date}&to=${date}`).then(r => r.json()),
+        apiFetch(
+          `/api/sales?from=${fromISO}&to=${toISO}&limit=200`
+        ).then((r) => r.json()),
+        apiFetch(
+          `/api/reports/expenses?from=${date}&to=${date}`
+        ).then((r) => r.json()),
+        apiFetch(
+          `/api/stock/adjustments?from=${date}&to=${date}`
+        ).then((r) => r.json()),
       ]);
+
       setSales(salesRes.data ?? []);
       setExpenses(expRes.items ?? []);
       setAdjustments(Array.isArray(adjRes) ? adjRes : []);
@@ -85,7 +118,9 @@ export default function ReportsPage() {
     }
   }, [date]);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
 
   function shiftDate(days: number) {
     const d = new Date(date);
@@ -93,135 +128,242 @@ export default function ReportsPage() {
     setDate(d.toISOString().split("T")[0]);
   }
 
-  const filteredSales = sales.filter(s => {
-    const nameMatch = !salesSearch || (s.customer?.name ?? "").toLowerCase().includes(salesSearch.toLowerCase());
-    const payMatch  = paymentFilter === "all" || s.payment_method === paymentFilter;
+  const filteredSales = sales.filter((s) => {
+    const nameMatch =
+      !salesSearch ||
+      (s.customer?.name ?? "")
+        .toLowerCase()
+        .includes(salesSearch.toLowerCase());
+
+    const payMatch =
+      paymentFilter === "all" || s.payment_method === paymentFilter;
+
     return nameMatch && payMatch;
   });
 
-  const filteredExpenses = expenses.filter(e =>
-    !expenseSearch || e.description.toLowerCase().includes(expenseSearch.toLowerCase())
+  const filteredExpenses = expenses.filter(
+    (e) =>
+      !expenseSearch ||
+      e.description.toLowerCase().includes(expenseSearch.toLowerCase())
   );
 
-  const filteredAdjustments = adjustments.filter(a =>
-    !stockSearch || (a.product?.name ?? "").toLowerCase().includes(stockSearch.toLowerCase())
+  const filteredAdjustments = adjustments.filter(
+    (a) =>
+      !stockSearch ||
+      (a.product?.name ?? "")
+        .toLowerCase()
+        .includes(stockSearch.toLowerCase())
   );
 
   return (
     <div className="flex flex-col h-[calc(100vh-80px)] max-w-lg mx-auto w-full">
       <div className="px-4 pt-4 pb-2">
-        <h1 className="font-bold text-2xl tracking-tight">Reports</h1>
+        <h1 className="font-bold text-2xl tracking-tight">
+          Reportes
+        </h1>
       </div>
 
       <Tabs defaultValue="sales" className="flex flex-col flex-1 min-h-0">
         <div className="px-4">
           <TabsList className="w-full">
-            <TabsTrigger value="sales" className="flex-1">Sales</TabsTrigger>
-            <TabsTrigger value="expenses" className="flex-1">Expenses</TabsTrigger>
-            <TabsTrigger value="stock" className="flex-1">Stock Adj.</TabsTrigger>
+            <TabsTrigger value="sales" className="flex-1">
+              Ventas
+            </TabsTrigger>
+            <TabsTrigger value="expenses" className="flex-1">
+              Gastos
+            </TabsTrigger>
+            <TabsTrigger value="stock" className="flex-1">
+              Ajustes de inventario
+            </TabsTrigger>
           </TabsList>
         </div>
 
-        {/* Date picker */}
+        {/* Selector de fecha */}
         <div className="px-4 pt-3 pb-2 flex items-center gap-2">
-          <Button size="icon" variant="outline" onClick={() => shiftDate(-1)}><ChevronLeft size={16} /></Button>
-          <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="flex-1 text-center" />
-          <Button size="icon" variant="outline" onClick={() => shiftDate(1)} disabled={date >= today}><ChevronRight size={16} /></Button>
+          <Button
+            size="icon"
+            variant="outline"
+            onClick={() => shiftDate(-1)}
+            aria-label="Día anterior"
+          >
+            <ChevronLeft size={16} />
+          </Button>
+
+          <Input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="flex-1 text-center"
+          />
+
+          <Button
+            size="icon"
+            variant="outline"
+            onClick={() => shiftDate(1)}
+            disabled={date >= today}
+            aria-label="Día siguiente"
+          >
+            <ChevronRight size={16} />
+          </Button>
         </div>
 
-        {/* Sales tab */}
-        <TabsContent value="sales" className="flex-1 overflow-y-auto px-4 pb-4 mt-0 space-y-2">
+        {/* Pestaña de ventas */}
+        <TabsContent
+          value="sales"
+          className="flex-1 overflow-y-auto px-4 pb-4 mt-0 space-y-2"
+        >
           <div className="flex gap-2">
             <Input
-              placeholder="Search customer…"
+              placeholder="Buscar cliente..."
               value={salesSearch}
-              onChange={e => setSalesSearch(e.target.value)}
+              onChange={(e) => setSalesSearch(e.target.value)}
               className="flex-1"
             />
-            <Select value={paymentFilter} onValueChange={v => setPaymentFilter(v as typeof paymentFilter)}>
+
+            <Select
+              value={paymentFilter}
+              onValueChange={(v) =>
+                setPaymentFilter(v as typeof paymentFilter)
+              }
+            >
               <SelectTrigger className="w-32">
-                <SelectValue />
+                <SelectValue placeholder="Pago" />
               </SelectTrigger>
+
               <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="cash">Cash</SelectItem>
-                <SelectItem value="bank_transfer">Transfer</SelectItem>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="cash">Efectivo</SelectItem>
+                <SelectItem value="bank_transfer">Transferencia</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           {loading && <LoadingSkeleton />}
+
           {!loading && filteredSales.length === 0 && (
-            <p className="text-center text-muted-foreground py-8">No sales in this period</p>
+            <p className="text-center text-muted-foreground py-8">
+              No hay ventas registradas en este periodo.
+            </p>
           )}
-          {filteredSales.map(sale => (
+
+          {filteredSales.map((sale) => (
             <SaleCard
               key={sale.id}
               sale={sale}
               expanded={expandedSaleId === sale.id}
-              onToggle={() => setExpandedSaleId(expandedSaleId === sale.id ? null : sale.id)}
+              onToggle={() =>
+                setExpandedSaleId(
+                  expandedSaleId === sale.id ? null : sale.id
+                )
+              }
               onRefunded={loadAll}
             />
           ))}
         </TabsContent>
 
-        {/* Expenses tab */}
-        <TabsContent value="expenses" className="flex-1 overflow-y-auto px-4 pb-4 mt-0 space-y-2">
+        {/* Pestaña de gastos */}
+        <TabsContent
+          value="expenses"
+          className="flex-1 overflow-y-auto px-4 pb-4 mt-0 space-y-2"
+        >
           <Input
-            placeholder="Search description…"
+            placeholder="Buscar descripción..."
             value={expenseSearch}
-            onChange={e => setExpenseSearch(e.target.value)}
+            onChange={(e) => setExpenseSearch(e.target.value)}
           />
 
           {loading && <LoadingSkeleton />}
+
           {!loading && filteredExpenses.length === 0 && (
-            <p className="text-center text-muted-foreground py-8">No expenses in this period</p>
+            <p className="text-center text-muted-foreground py-8">
+              No hay gastos registrados en este periodo.
+            </p>
           )}
-          {filteredExpenses.map(exp => (
-            <div key={exp.id} className="bg-card border rounded-xl p-3">
+
+          {filteredExpenses.map((exp) => (
+            <div
+              key={exp.id}
+              className="bg-card border rounded-xl p-3"
+            >
               <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium flex-1">{exp.description}</p>
-                <p className="font-bold text-red-600 flex-shrink-0">{formatCurrency(Number(exp.amount))}</p>
+                <p className="text-sm font-medium flex-1">
+                  {exp.description}
+                </p>
+
+                <p className="font-bold text-red-600 flex-shrink-0">
+                  {formatCurrency(Number(exp.amount))}
+                </p>
               </div>
+
               <p className="text-xs text-muted-foreground mt-0.5">
                 {formatDateTime(exp.created_at)}
-                {exp.device?.name && <span className="ml-2">· {exp.device.name}</span>}
+                {exp.device?.name && (
+                  <span className="ml-2">· {exp.device.name}</span>
+                )}
               </p>
             </div>
           ))}
         </TabsContent>
 
-        {/* Stock Adjustments tab */}
-        <TabsContent value="stock" className="flex-1 overflow-y-auto px-4 pb-4 mt-0 space-y-2">
+        {/* Pestaña de ajustes de inventario */}
+        <TabsContent
+          value="stock"
+          className="flex-1 overflow-y-auto px-4 pb-4 mt-0 space-y-2"
+        >
           <Input
-            placeholder="Search product…"
+            placeholder="Buscar producto..."
             value={stockSearch}
-            onChange={e => setStockSearch(e.target.value)}
+            onChange={(e) => setStockSearch(e.target.value)}
           />
 
           {loading && <LoadingSkeleton />}
+
           {!loading && filteredAdjustments.length === 0 && (
-            <p className="text-center text-muted-foreground py-8">No adjustments in this period</p>
+            <p className="text-center text-muted-foreground py-8">
+              No hay ajustes de inventario en este periodo.
+            </p>
           )}
-          {filteredAdjustments.map(adj => (
-            <div key={adj.id} className="bg-card border rounded-xl p-3">
+
+          {filteredAdjustments.map((adj) => (
+            <div
+              key={adj.id}
+              className="bg-card border rounded-xl p-3"
+            >
               <div className="flex items-center gap-3">
-                <span className={cn(
-                  "font-bold text-base w-10 flex-shrink-0 text-right",
-                  adj.qty_change > 0 ? "text-emerald-600" : "text-red-600"
-                )}>
-                  {adj.qty_change > 0 ? `+${adj.qty_change}` : adj.qty_change}
+                <span
+                  className={cn(
+                    "font-bold text-base w-10 flex-shrink-0 text-right",
+                    adj.qty_change > 0
+                      ? "text-emerald-600"
+                      : "text-red-600"
+                  )}
+                >
+                  {adj.qty_change > 0
+                    ? `+${adj.qty_change}`
+                    : adj.qty_change}
                 </span>
+
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">
                     {adj.product?.name ?? "—"}
+
                     {adj.variant?.size_label && (
-                      <span className="text-muted-foreground font-normal"> ({adj.variant.size_label})</span>
+                      <span className="text-muted-foreground font-normal">
+                        {" "}({adj.variant.size_label})
+                      </span>
                     )}
                   </p>
-                  {adj.note && <p className="text-xs text-muted-foreground truncate">{adj.note}</p>}
+
+                  {adj.note && (
+                    <p className="text-xs text-muted-foreground truncate">
+                      {adj.note}
+                    </p>
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground flex-shrink-0">{formatDateTime(adj.created_at)}</p>
+
+                <p className="text-xs text-muted-foreground flex-shrink-0">
+                  {formatDateTime(adj.created_at)}
+                </p>
               </div>
             </div>
           ))}
@@ -231,9 +373,14 @@ export default function ReportsPage() {
   );
 }
 
-// ── Sale card with expandable detail ─────────────────────────────────────────
+// ── Tarjeta de venta con detalle desplegable ──────────────────────────────────
 
-function SaleCard({ sale, expanded, onToggle, onRefunded }: {
+function SaleCard({
+  sale,
+  expanded,
+  onToggle,
+  onRefunded,
+}: {
   sale: SaleRow;
   expanded: boolean;
   onToggle: () => void;
@@ -243,28 +390,44 @@ function SaleCard({ sale, expanded, onToggle, onRefunded }: {
   const [refunding, setRefunding] = useState(false);
 
   const subtotal = sale.items.reduce((s, i) => s + i.line_total, 0);
-  const discountAmount = sale.discount_type === "percent"
-    ? (subtotal * (sale.discount_value ?? 0)) / 100
-    : (sale.discount_value ?? 0);
+
+  const discountAmount =
+    sale.discount_type === "percent"
+      ? (subtotal * (sale.discount_value ?? 0)) / 100
+      : (sale.discount_value ?? 0);
 
   const hasAnyRefund = sale.items.some((i) => i.refunded_qty > 0);
 
-  const refundableItems = sale.items.filter((i) => i.refunded_qty < i.qty);
+  const refundableItems = sale.items.filter(
+    (i) => i.refunded_qty < i.qty
+  );
 
   const checkedItems = sale.items.filter((i) => checkedIds.has(i.id));
-  const refundTotal = checkedItems.reduce((s, i) => s + i.unit_price * (i.qty - i.refunded_qty), 0);
+
+  const refundTotal = checkedItems.reduce(
+    (s, i) => s + i.unit_price * (i.qty - i.refunded_qty),
+    0
+  );
 
   function toggleCheck(id: string) {
     setCheckedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+
       return next;
     });
   }
 
   async function confirmRefund() {
     if (!checkedItems.length) return;
+
     setRefunding(true);
+
     try {
       const res = await apiFetch(`/api/sales/${sale.id}/refund`, {
         method: "POST",
@@ -276,9 +439,18 @@ function SaleCard({ sale, expanded, onToggle, onRefunded }: {
           })),
         }),
       });
+
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error ?? "Refund failed"); return; }
-      toast.success(`Refunded ${formatCurrency(data.refunded_total)}`);
+
+      if (!res.ok) {
+        toast.error(data.error ?? "No se pudo realizar la devolución.");
+        return;
+      }
+
+      toast.success(
+        `Devolución realizada: ${formatCurrency(data.refunded_total)}`
+      );
+
       setCheckedIds(new Set());
       onRefunded();
     } finally {
@@ -295,25 +467,47 @@ function SaleCard({ sale, expanded, onToggle, onRefunded }: {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <p className="text-sm font-semibold truncate">
-              {sale.customer?.name ?? "Walk-in"}
+              {sale.customer?.name ?? "Cliente ocasional"}
             </p>
+
             <Badge
-              variant={sale.payment_method === "cash" ? "default" : "secondary"}
+              variant={
+                sale.payment_method === "cash" ? "default" : "secondary"
+              }
               className="text-[10px]"
             >
-              {sale.payment_method === "cash" ? "Cash" : "Transfer"}
+              {sale.payment_method === "cash"
+                ? "Efectivo"
+                : "Transferencia"}
             </Badge>
+
             {hasAnyRefund && (
-              <Badge className="text-[10px] bg-amber-500 hover:bg-amber-500">Refund</Badge>
+              <Badge className="text-[10px] bg-amber-500 hover:bg-amber-500">
+                Con devolución
+              </Badge>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">{formatDateTime(sale.created_at)}</p>
+
+          <p className="text-xs text-muted-foreground">
+            {formatDateTime(sale.created_at)}
+          </p>
         </div>
-        <p className="font-bold text-sm flex-shrink-0">{formatCurrency(Number(sale.total))}</p>
-        {expanded
-          ? <ChevronUp size={15} className="text-muted-foreground flex-shrink-0" />
-          : <ChevronDown size={15} className="text-muted-foreground flex-shrink-0" />
-        }
+
+        <p className="font-bold text-sm flex-shrink-0">
+          {formatCurrency(Number(sale.total))}
+        </p>
+
+        {expanded ? (
+          <ChevronUp
+            size={15}
+            className="text-muted-foreground flex-shrink-0"
+          />
+        ) : (
+          <ChevronDown
+            size={15}
+            className="text-muted-foreground flex-shrink-0"
+          />
+        )}
       </button>
 
       {expanded && (
@@ -321,10 +515,14 @@ function SaleCard({ sale, expanded, onToggle, onRefunded }: {
           {sale.items.map((item) => {
             const fullyRefunded = item.refunded_qty >= item.qty;
             const checked = checkedIds.has(item.id);
+
             return (
               <div
                 key={item.id}
-                className={cn("flex items-center gap-2 text-sm", fullyRefunded && "opacity-50")}
+                className={cn(
+                  "flex items-center gap-2 text-sm",
+                  fullyRefunded && "opacity-50"
+                )}
               >
                 {!fullyRefunded ? (
                   <input
@@ -332,18 +530,32 @@ function SaleCard({ sale, expanded, onToggle, onRefunded }: {
                     className="h-3.5 w-3.5 flex-shrink-0"
                     checked={checked}
                     onChange={() => toggleCheck(item.id)}
+                    aria-label={`Seleccionar ${item.description} para devolución`}
                   />
                 ) : (
                   <span className="h-3.5 w-3.5 flex-shrink-0" />
                 )}
-                <span className={cn("flex-1 truncate text-muted-foreground", fullyRefunded && "line-through")}>
+
+                <span
+                  className={cn(
+                    "flex-1 truncate text-muted-foreground",
+                    fullyRefunded && "line-through"
+                  )}
+                >
                   {item.description}
-                  <span className="text-foreground"> × {item.qty}</span>
+                  <span className="text-foreground">
+                    {" "}× {item.qty}
+                  </span>
                 </span>
+
                 {fullyRefunded ? (
-                  <span className="text-[10px] text-amber-600 flex-shrink-0">Refunded</span>
+                  <span className="text-[10px] text-amber-600 flex-shrink-0">
+                    Devuelto
+                  </span>
                 ) : (
-                  <span className="font-medium flex-shrink-0">{formatCurrency(item.line_total)}</span>
+                  <span className="font-medium flex-shrink-0">
+                    {formatCurrency(item.line_total)}
+                  </span>
                 )}
               </div>
             );
@@ -351,7 +563,7 @@ function SaleCard({ sale, expanded, onToggle, onRefunded }: {
 
           {discountAmount > 0 && (
             <div className="flex justify-between text-sm text-red-600 border-t pt-1.5 mt-1">
-              <span>Discount</span>
+              <span>Descuento</span>
               <span>−{formatCurrency(discountAmount)}</span>
             </div>
           )}
@@ -369,7 +581,11 @@ function SaleCard({ sale, expanded, onToggle, onRefunded }: {
               onClick={confirmRefund}
               disabled={refunding}
             >
-              {refunding ? "Processing…" : `Refund ${checkedIds.size} item${checkedIds.size > 1 ? "s" : ""} · ${formatCurrency(refundTotal)}`}
+              {refunding
+                ? "Procesando..."
+                : `Devolver ${checkedIds.size} ${
+                    checkedIds.size === 1 ? "producto" : "productos"
+                  } · ${formatCurrency(refundTotal)}`}
             </Button>
           )}
         </div>
@@ -382,7 +598,10 @@ function LoadingSkeleton() {
   return (
     <div className="space-y-2">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="bg-card border rounded-xl p-3 space-y-2 animate-pulse">
+        <div
+          key={i}
+          className="bg-card border rounded-xl p-3 space-y-2 animate-pulse"
+        >
           <div className="flex justify-between">
             <div className="h-3 bg-muted rounded w-1/3" />
             <div className="h-3 bg-muted rounded w-1/4" />

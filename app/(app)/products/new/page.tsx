@@ -7,7 +7,7 @@ export default async function NewProductPage() {
   if (!device) redirect("/setup");
   return (
     <div className="p-4 max-w-lg mx-auto">
-      <h1 className="font-bold text-xl mb-4">Add Product</h1>
+      <h1 className="font-bold text-xl mb-4">Agregar Producto</h1>
       <ProductForm />
     </div>
   );
