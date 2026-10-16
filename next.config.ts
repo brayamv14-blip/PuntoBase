@@ -1,3 +1,4 @@
+
 import type { NextConfig } from "next";
 import withPWAInit from "@ducanh2912/next-pwa";
 
@@ -7,6 +8,15 @@ const withPWA = withPWAInit({
   aggressiveFrontEndNavCaching: true,
   reloadOnOnline: true,
   disable: process.env.NODE_ENV === "development",
+
+  // Conserva las estrategias de caché predeterminadas de Next PWA.
+  extendDefaultRuntimeCaching: true,
+
+  // Página que se mostrará si no se puede cargar una ruta sin conexión.
+  fallbacks: {
+    document: "/~offline",
+  },
+
   workboxOptions: {
     disableDevLogs: true,
     runtimeCaching: [
@@ -15,7 +25,9 @@ const withPWA = withPWAInit({
         handler: "StaleWhileRevalidate",
         options: {
           cacheName: "api-cache",
-          expiration: { maxAgeSeconds: 60 * 60 * 24 },
+          expiration: {
+            maxAgeSeconds: 60 * 60 * 24,
+          },
         },
       },
     ],
@@ -25,7 +37,7 @@ const withPWA = withPWAInit({
 const nextConfig: NextConfig = {
   serverExternalPackages: ["@react-pdf/renderer"],
   turbopack: {},
-allowedDevOrigins: ["192.168.1.89"],
+  allowedDevOrigins: ["192.168.1.89"],
 };
 
 export default withPWA(nextConfig);
