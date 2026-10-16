@@ -1,24 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
-import type { CreateSaleRequest, DiscountType, PaymentMethod } from "@/types";
+import type { CreateSaleRequest, PaymentMethod } from "@/types";
 import { ensureOpenCashRegister } from "@/lib/cash-register";
+
+type SaleRequestWithClientId = CreateSaleRequest & {
+  client_sale_id?: string;
+};
 
 // GET /api/sales
 export async function GET(req: NextRequest) {
   try {
     const device = await getDeviceFromCookies();
-    if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    if (!device) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const { searchParams } = new URL(req.url);
     const from = searchParams.get("from");
     const to = searchParams.get("to");
-    const limit = parseInt(searchParams.get("limit") ?? "50");
-    const offset = parseInt(searchParams.get("offset") ?? "0");
+    const limit = Math.max(
+      1,
+      Math.min(Number.parseInt(searchParams.get("limit") ?? "50", 10) || 50, 200)
+    );
+    const offset = Math.max(
+      0,
+      Number.parseInt(searchParams.get("offset") ?? "0", 10) || 0
+    );
 
     let query = supabase
       .from("sales")
-      .select("*, customer:customers(*), device:devices(id,name), items:sale_items(*)", { count: "exact" })
+      .select(
+        "*, customer:customers(*), device:devices(id,name), items:sale_items(*)",
+        { count: "exact" }
+      )
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -26,209 +42,448 @@ export async function GET(req: NextRequest) {
     if (to) query = query.lte("created_at", to);
 
     const { data, error, count } = await query;
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    if (error) {
+      console.error("[sales GET]", error);
+      return NextResponse.json(
+        { error: "No se pudieron consultar las ventas." },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({ data, count });
-  } catch (err) {
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  } catch (error) {
+    console.error("[sales GET]", error);
+    return NextResponse.json(
+      { error: "Error interno del servidor." },
+      { status: 500 }
+    );
   }
 }
 
-// POST /api/sales — all roles; atomic sale processing
+// POST /api/sales
 export async function POST(req: NextRequest) {
-  const device = await getDeviceFromCookies();
-  if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const body: CreateSaleRequest = await req.json();
-  const { items, customer_id, customer_name, customer_phone, discount_type, discount_value = 0, payment_method, notes } = body;
-
-  if (!items?.length) return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
-  if (!payment_method) return NextResponse.json({ error: "payment_method required" }, { status: 400 });
-
   try {
-    // ── 1. Resolve customer ──────────────────────────────────────────────────
+    const device = await getDeviceFromCookies();
+
+    if (!device) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = (await req.json()) as SaleRequestWithClientId;
+
+    const {
+      items,
+      customer_id,
+      customer_name,
+      customer_phone,
+      discount_type,
+      discount_value = 0,
+      payment_method,
+      notes,
+      client_sale_id,
+    } = body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
+    }
+
+    if (!["cash", "bank_transfer"].includes(payment_method)) {
+      return NextResponse.json(
+        { error: "Método de pago inválido." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      client_sale_id !== undefined &&
+      (typeof client_sale_id !== "string" ||
+        client_sale_id.trim().length === 0 ||
+        client_sale_id.length > 200)
+    ) {
+      return NextResponse.json(
+        { error: "Identificador de venta inválido." },
+        { status: 400 }
+      );
+    }
+
+    for (const item of items) {
+      if (
+        item.item_type !== "product" ||
+        !item.product_id ||
+        !item.variant_id ||
+        !item.description?.trim() ||
+        !Number.isFinite(item.unit_price) ||
+        item.unit_price < 0 ||
+        !Number.isInteger(item.qty) ||
+        item.qty <= 0
+      ) {
+        return NextResponse.json(
+          { error: "Hay un artículo inválido en la venta." },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (
+      !Number.isFinite(discount_value) ||
+      discount_value < 0 ||
+      (discount_type === "percent" && discount_value > 100) ||
+      (discount_type !== undefined &&
+        discount_type !== null &&
+        discount_type !== "flat" &&
+        discount_type !== "percent")
+    ) {
+      return NextResponse.json(
+        { error: "El descuento no es válido." },
+        { status: 400 }
+      );
+    }
+
+    // Si la venta ya se recibió, devolver su ID sin volver a procesarla.
+    if (client_sale_id) {
+      const { data: existing, error: lookupError } = await supabase
+        .from("sales")
+        .select("id")
+        .eq("client_sale_id", client_sale_id)
+        .maybeSingle();
+
+      if (lookupError) throw lookupError;
+
+      if (existing) {
+        return NextResponse.json(
+          { id: existing.id, duplicate: true },
+          { status: 200 }
+        );
+      }
+    }
+
+    // Resolver cliente.
     let resolvedCustomerId = customer_id ?? null;
+
     if (!resolvedCustomerId && customer_name?.trim()) {
-      const { data: newCustomer } = await supabase
+      const { data: customer, error: customerError } = await supabase
         .from("customers")
-        .insert({ name: customer_name.trim(), phone: customer_phone?.trim() || null })
-        .select()
+        .insert({
+          name: customer_name.trim(),
+          phone: customer_phone?.trim() || null,
+        })
+        .select("id")
         .single();
-      resolvedCustomerId = newCustomer?.id ?? null;
+
+      if (customerError) throw customerError;
+      resolvedCustomerId = customer.id;
     }
 
-    // ── 3. Validate product/variant stock (skip untracked) ─────────────────
-    const productItems = items.filter((i) => i.item_type === "product");
-    for (const pi of productItems) {
-      const { data: prod } = await supabase
+    // Validar productos y variantes.
+    for (const item of items) {
+      const { data: product, error: productError } = await supabase
         .from("products")
-        .select("track_stock")
-        .eq("id", pi.product_id!)
+        .select("id, track_stock")
+        .eq("id", item.product_id!)
         .single();
-      if (!prod) {
-        return NextResponse.json({ error: `Product not found for ${pi.description}` }, { status: 404 });
-      }
-      if (!prod.track_stock) continue;
 
-      const { data: variant } = await supabase
+      if (productError || !product) {
+        return NextResponse.json(
+          { error: `No se encontró el producto: ${item.description}` },
+          { status: 404 }
+        );
+      }
+
+      const { data: variant, error: variantError } = await supabase
         .from("product_variants")
-        .select("stock_qty")
-        .eq("id", pi.variant_id!)
+        .select("id, product_id, stock_qty")
+        .eq("id", item.variant_id!)
+        .eq("product_id", item.product_id!)
         .single();
-      if (!variant || variant.stock_qty < pi.qty) {
-        return NextResponse.json({ error: `Insufficient stock for ${pi.description}` }, { status: 409 });
+
+      if (variantError || !variant) {
+        return NextResponse.json(
+          { error: `No se encontró la variante: ${item.description}` },
+          { status: 404 }
+        );
+      }
+
+      if (product.track_stock && variant.stock_qty < item.qty) {
+        return NextResponse.json(
+          { error: `Existencias insuficientes para ${item.description}` },
+          { status: 409 }
+        );
       }
     }
 
-    // ── 4. Calculate totals ───────────────────────────────────────────────────
-    const subtotal = items.reduce((sum, i) => sum + i.unit_price * i.qty, 0);
-    let discountAmount = 0;
-    if (discount_type === "flat") discountAmount = discount_value;
-    else if (discount_type === "percent") discountAmount = (subtotal * discount_value) / 100;
+    // Calcular importes en el servidor.
+    const subtotal = items.reduce(
+      (sum, item) => sum + item.unit_price * item.qty,
+      0
+    );
+
+    const discountAmount =
+      discount_type === "flat"
+        ? discount_value
+        : discount_type === "percent"
+          ? (subtotal * discount_value) / 100
+          : 0;
+
     const total = Math.max(0, subtotal - discountAmount);
 
-    // ── 5. Generate sale number ───────────────────────────────────────────────
-    const today = new Date().toISOString().split("T")[0].replace(/-/g, "");
-    const { count: todayCount } = await supabase
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const startOfDay = new Date(now);
+    startOfDay.setUTCHours(0, 0, 0, 0);
+
+    const nextDay = new Date(startOfDay);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+
+    const { count, error: countError } = await supabase
       .from("sales")
       .select("id", { count: "exact", head: true })
-      .gte("created_at", new Date().toISOString().split("T")[0]);
-    const saleNumber = `S-${today}-${String((todayCount ?? 0) + 1).padStart(4, "0")}`;
+      .gte("created_at", startOfDay.toISOString())
+      .lt("created_at", nextDay.toISOString());
 
-    // ── 6. Insert sale ───────────────────────────────────────────────────────
-    const { data: sale, error: saleErr } = await supabase
+    if (countError) throw countError;
+
+    const salePayload = {
+      sale_number: `S-${today}-${String((count ?? 0) + 1).padStart(4, "0")}`,
+      client_sale_id: client_sale_id ?? null,
+      device_id: device.id,
+      customer_id: resolvedCustomerId,
+      discount_type: discount_type || null,
+      discount_value,
+      subtotal,
+      total,
+      payment_method: payment_method as PaymentMethod,
+      payment_status: payment_method === "cash" ? "paid" : "pending",
+      paid_at: payment_method === "cash" ? now.toISOString() : null,
+      notes: notes?.trim() || null,
+    };
+
+    // Insertar venta.
+    let { data: sale, error: saleError } = await supabase
       .from("sales")
-      .insert({
-        sale_number: saleNumber,
-        device_id: device.id,
-        customer_id: resolvedCustomerId,
-        discount_type: discount_type || null,
-        discount_value,
-        subtotal,
-        total,
-        payment_method: payment_method as PaymentMethod,
-        payment_status: payment_method === "cash" ? "paid" : "pending",
-        paid_at: payment_method === "cash" ? new Date().toISOString() : null,
-        notes: notes?.trim() || null,
-      })
-      .select()
+      .insert(salePayload)
+      .select("id, payment_method")
       .single();
 
-    if (saleErr) {
-      // Retry if sale number collision
-      if (saleErr.code === "23505") {
-        const retryNumber = `S-${today}-${String((todayCount ?? 0) + 2).padStart(4, "0")}`;
-        const { data: retrySale, error: retryErr } = await supabase
-          .from("sales")
-          .insert({
-            sale_number: retryNumber,
-            device_id: device.id,
-            customer_id: resolvedCustomerId,
-            discount_type: discount_type || null,
-            discount_value,
-            subtotal,
-            total,
-            payment_method: payment_method as PaymentMethod,
-        payment_status: payment_method === "cash" ? "paid" : "pending",
-        paid_at: payment_method === "cash" ? new Date().toISOString() : null,
-            notes: notes?.trim() || null,
-          })
-          .select()
-          .single();
-        if (retryErr) throw retryErr;
-        return processSaleItems(retrySale, items, device.id);
+    // Ante una colisión, primero comprobar si es un reintento de la misma venta.
+    if (saleError?.code === "23505" && client_sale_id) {
+      const { data: existing, error: lookupError } = await supabase
+        .from("sales")
+        .select("id")
+        .eq("client_sale_id", client_sale_id)
+        .maybeSingle();
+
+      if (lookupError) throw lookupError;
+
+      if (existing) {
+        return NextResponse.json(
+          { id: existing.id, duplicate: true },
+          { status: 200 }
+        );
       }
-      throw saleErr;
+    }
+
+    // Si colisionó el número de venta, intentar con el siguiente número.
+    if (saleError?.code === "23505") {
+      const retryPayload = {
+        ...salePayload,
+        sale_number: `S-${today}-${String((count ?? 0) + 2).padStart(4, "0")}`,
+      };
+
+      const retry = await supabase
+        .from("sales")
+        .insert(retryPayload)
+        .select("id, payment_method")
+        .single();
+
+      sale = retry.data;
+      saleError = retry.error;
+
+      if (saleError?.code === "23505" && client_sale_id) {
+        const { data: existing, error: lookupError } = await supabase
+          .from("sales")
+          .select("id")
+          .eq("client_sale_id", client_sale_id)
+          .maybeSingle();
+
+        if (lookupError) throw lookupError;
+
+        if (existing) {
+          return NextResponse.json(
+            { id: existing.id, duplicate: true },
+            { status: 200 }
+          );
+        }
+      }
+    }
+
+    if (saleError || !sale) {
+      throw saleError ?? new Error("No se pudo crear la venta.");
     }
 
     return await processSaleItems(sale, items, device.id);
-  } catch (err) {
-    console.error("[sales POST]", err);
-    return NextResponse.json({ error: "Failed to process sale" }, { status: 500 });
+  } catch (error) {
+    console.error("[sales POST]", error);
+    return NextResponse.json(
+      { error: "No se pudo procesar la venta." },
+      { status: 500 }
+    );
   }
 }
 
-async function processSaleItems(sale: { id: string; payment_method: string }, items: CreateSaleRequest["items"], deviceId: string) {
+async function processSaleItems(
+  sale: { id: string; payment_method: string },
+  items: CreateSaleRequest["items"],
+  deviceId: string
+) {
   const now = new Date().toISOString();
-  const rollbacks: (() => Promise<void>)[] = [];
+
+  const insertedVariantChanges: Array<{
+    variantId: string;
+    oldQty: number;
+    newQty: number;
+  }> = [];
+
+  let saleItemsInserted = false;
 
   try {
-    // ── 7. Insert sale items ───────────────────────────────────────────────
-    const saleItemRows = items.map((i) => ({
+    const rows = items.map((item) => ({
       sale_id: sale.id,
-      item_type: i.item_type,
-      product_id: i.product_id ?? null,
-      variant_id: i.variant_id ?? null,
-      description: i.description,
-      unit_price: i.unit_price,
-      qty: i.qty,
-      line_total: i.unit_price * i.qty,
+      item_type: item.item_type,
+      product_id: item.product_id ?? null,
+      variant_id: item.variant_id ?? null,
+      description: item.description,
+      unit_price: item.unit_price,
+      qty: item.qty,
+      line_total: item.unit_price * item.qty,
     }));
 
-    const { error: itemsErr } = await supabase.from("sale_items").insert(saleItemRows);
-    if (itemsErr) throw itemsErr;
-    rollbacks.push(async () => {
-      await supabase.from("sale_items").delete().eq("sale_id", sale.id);
-    });
+    const { error: itemsError } = await supabase
+      .from("sale_items")
+      .insert(rows);
 
-    // ── 9. Deduct variant stock + log adjustments (skip untracked) ────────
-    const productItems = items.filter((i) => i.item_type === "product");
-    const stockChanges: { variantId: string; oldQty: number }[] = [];
-    for (const pi of productItems) {
-      const { data: prodCheck } = await supabase
+    if (itemsError) throw itemsError;
+    saleItemsInserted = true;
+
+    for (const item of items) {
+      const { data: product, error: productError } = await supabase
         .from("products")
         .select("track_stock")
-        .eq("id", pi.product_id!)
+        .eq("id", item.product_id!)
         .single();
-      if (!prodCheck?.track_stock) continue;
 
-      const { data: variant } = await supabase
+      if (productError) throw productError;
+      if (!product?.track_stock) continue;
+
+      const { data: variant, error: variantError } = await supabase
         .from("product_variants")
         .select("stock_qty")
-        .eq("id", pi.variant_id!)
+        .eq("id", item.variant_id!)
+        .eq("product_id", item.product_id!)
         .single();
-      if (variant) {
-        const newQty = variant.stock_qty - pi.qty;
-        const { error } = await supabase
-          .from("product_variants")
-          .update({ stock_qty: newQty, updated_at: now })
-          .eq("id", pi.variant_id!);
-        if (error) throw error;
-        stockChanges.push({ variantId: pi.variant_id!, oldQty: variant.stock_qty });
 
-        await supabase.from("stock_adjustments").insert({
-          product_id: pi.product_id!,
-          variant_id: pi.variant_id!,
+      if (variantError || !variant) {
+        throw variantError ?? new Error("No se encontró la variante.");
+      }
+
+      if (variant.stock_qty < item.qty) {
+        throw new Error(`Existencias insuficientes para ${item.description}.`);
+      }
+
+      const newQty = variant.stock_qty - item.qty;
+
+      // Actualización condicional para detectar cambios concurrentes.
+      const { data: updated, error: updateError } = await supabase
+        .from("product_variants")
+        .update({ stock_qty: newQty, updated_at: now })
+        .eq("id", item.variant_id!)
+        .eq("stock_qty", variant.stock_qty)
+        .select("id")
+        .maybeSingle();
+
+      if (updateError) throw updateError;
+
+      if (!updated) {
+        throw new Error(
+          `El stock de ${item.description} cambió. Intenta nuevamente.`
+        );
+      }
+
+      // Guardar inmediatamente el cambio para poder revertirlo si falla algo.
+      insertedVariantChanges.push({
+        variantId: item.variant_id!,
+        oldQty: variant.stock_qty,
+        newQty,
+      });
+
+      const { error: adjustmentError } = await supabase
+        .from("stock_adjustments")
+        .insert({
+          product_id: item.product_id!,
+          variant_id: item.variant_id!,
           adjustment_type: "sale",
           qty_before: variant.stock_qty,
-          qty_change: -pi.qty,
+          qty_change: -item.qty,
           qty_after: newQty,
           note: `Sale ${sale.id}`,
           device_id: deviceId,
           related_sale_id: sale.id,
         });
-      }
-    }
-    if (stockChanges.length > 0) {
-      rollbacks.push(async () => {
-        for (const { variantId, oldQty } of stockChanges) {
-          await supabase.from("product_variants").update({ stock_qty: oldQty, updated_at: now }).eq("id", variantId);
-        }
-        await supabase.from("stock_adjustments").delete().eq("related_sale_id", sale.id);
-      });
+
+      if (adjustmentError) throw adjustmentError;
     }
 
-    // ── 10. Ensure cash register is open (reopens if EOD was already submitted) ──
     await ensureOpenCashRegister();
 
     return NextResponse.json({ id: sale.id }, { status: 201 });
-  } catch (err) {
-    // Compensate in reverse order, then delete sale
-    console.error("[sales] processSaleItems failed, rolling back:", err);
-    for (const undo of rollbacks.reverse()) {
-      try { await undo(); } catch (rollbackErr) { console.error("[sales] rollback step failed:", rollbackErr); }
+  } catch (error) {
+    console.error("[sales] Error procesando artículos; intentando revertir:", error);
+
+    // Revertir únicamente si el stock todavía tiene el valor que dejó esta venta.
+    for (const change of [...insertedVariantChanges].reverse()) {
+      const { error: rollbackError } = await supabase
+        .from("product_variants")
+        .update({
+          stock_qty: change.oldQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", change.variantId)
+        .eq("stock_qty", change.newQty);
+
+      if (rollbackError) {
+        console.error("[sales] Error revirtiendo stock:", rollbackError);
+      }
     }
-    await supabase.from("sales").delete().eq("id", sale.id);
-    throw err;
+
+    const { error: adjustmentDeleteError } = await supabase
+      .from("stock_adjustments")
+      .delete()
+      .eq("related_sale_id", sale.id);
+
+    if (adjustmentDeleteError) {
+      console.error("[sales] Error eliminando ajustes:", adjustmentDeleteError);
+    }
+
+    if (saleItemsInserted) {
+      const { error: itemDeleteError } = await supabase
+        .from("sale_items")
+        .delete()
+        .eq("sale_id", sale.id);
+
+      if (itemDeleteError) {
+        console.error("[sales] Error eliminando artículos:", itemDeleteError);
+      }
+    }
+
+    const { error: saleDeleteError } = await supabase
+      .from("sales")
+      .delete()
+      .eq("id", sale.id);
+
+    if (saleDeleteError) {
+      console.error("[sales] Error eliminando venta:", saleDeleteError);
+    }
+
+    throw error;
   }
 }
-
