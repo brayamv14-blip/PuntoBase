@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect } from "react";
@@ -18,7 +19,16 @@ import { formatCurrency } from "@/lib/utils";
 import { useCart } from "@/hooks/useCart";
 import { apiFetch } from "@/lib/api";
 import { enqueueSale, flushQueue } from "@/lib/offline-queue";
-import type { Customer, CartItem, DiscountType } from "@/types";
+import {
+  createLocalSaleSnapshot,
+  markLocalSaleSynced,
+} from "@/lib/local-sales";
+import type {
+  Customer,
+  CartItem,
+  DiscountType,
+  CreateSaleRequest,
+} from "@/types";
 
 export default function PosPage() {
   const router = useRouter();
@@ -34,15 +44,33 @@ export default function PosPage() {
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
 
   useEffect(() => {
+    let active = true;
+
     const syncPendingSales = () => {
       if (!navigator.onLine) return;
 
       void flushQueue(
-        () => {
-          toast.success("Venta pendiente sincronizada correctamente.");
+        (localId, saleId) => {
+          void markLocalSaleSynced(localId, saleId)
+            .then(() => {
+              if (active) {
+                toast.success(
+                  "Venta pendiente sincronizada correctamente."
+                );
+              }
+            })
+            .catch(() => {
+              if (active) {
+                toast.warning(
+                  "La venta se sincronizó, pero no se pudo actualizar el recibo local."
+                );
+              }
+            });
         },
         (_id: string, err: string) => {
-          toast.error(`Error al sincronizar la venta: ${err}`);
+          if (active) {
+            toast.error(`Error al sincronizar la venta: ${err}`);
+          }
         }
       );
     };
@@ -51,6 +79,7 @@ export default function PosPage() {
     syncPendingSales();
 
     return () => {
+      active = false;
       window.removeEventListener("online", syncPendingSales);
     };
   }, []);
@@ -61,7 +90,7 @@ export default function PosPage() {
       return;
     }
 
-    const t = setTimeout(async () => {
+    const timeoutId = setTimeout(async () => {
       try {
         const res = await apiFetch(
           `/api/customers?q=${encodeURIComponent(customerQuery)}`
@@ -69,13 +98,18 @@ export default function PosPage() {
 
         if (res.ok) {
           setCustomerResults(await res.json());
+        } else {
+          setCustomerResults([]);
         }
       } catch {
-        toast.error("No se pudo realizar la búsqueda de clientes.");
+        setCustomerResults([]);
+        if (navigator.onLine) {
+          toast.error("No se pudo realizar la búsqueda de clientes.");
+        }
       }
     }, 300);
 
-    return () => clearTimeout(t);
+    return () => clearTimeout(timeoutId);
   }, [customerQuery, customerMode]);
 
   async function handleCheckout() {
@@ -83,16 +117,16 @@ export default function PosPage() {
 
     setCheckingOut(true);
 
-    const payload = {
-      items: cart.items.map((i) => ({
-        item_type: i.item_type,
-        product_id: i.product_id,
-        variant_id: i.variant_id,
-        description: i.description,
-        unit_price: i.unit_price,
-        qty: i.qty,
+    const payload: CreateSaleRequest = {
+      items: cart.items.map((item) => ({
+        item_type: item.item_type,
+        product_id: item.product_id,
+        variant_id: item.variant_id,
+        description: item.description,
+        unit_price: item.unit_price,
+        qty: item.qty,
       })),
-      customer_id: cart.customer_id,
+      customer_id: cart.customer_id || undefined,
       customer_name:
         !cart.customer_id && cart.customer_name
           ? cart.customer_name
@@ -101,7 +135,7 @@ export default function PosPage() {
         !cart.customer_id && cart.customer_phone
           ? cart.customer_phone
           : undefined,
-      discount_type: cart.discount_type,
+      discount_type: cart.discount_type ?? undefined,
       discount_value: cart.discount_value,
       payment_method: cart.payment_method,
       notes: cart.notes,
@@ -118,13 +152,22 @@ export default function PosPage() {
           return;
         }
 
+        await createLocalSaleSnapshot(
+          clientSaleId,
+          payload,
+          cart.subtotal,
+          cart.total
+        );
+
         await enqueueSale(payload, clientSaleId);
+
         cart.clear();
 
         toast.success(
-          "Venta guardada en este dispositivo. Se sincronizará cuando vuelva internet."
+          "Venta guardada localmente. Pendiente de sincronización."
         );
 
+        router.push(`/pos/receipt/${clientSaleId}`);
         return;
       }
 
@@ -140,7 +183,9 @@ export default function PosPage() {
         const data = await res.json();
 
         if (!res.ok) {
-          toast.error(data.error ?? "No se pudo completar la venta.");
+          toast.error(
+            data.error ?? "No se pudo completar la venta."
+          );
           return;
         }
 
@@ -154,16 +199,27 @@ export default function PosPage() {
           return;
         }
 
+        // Conserva el mismo identificador para el reintento.
+        await createLocalSaleSnapshot(
+          clientSaleId,
+          payload,
+          cart.subtotal,
+          cart.total
+        );
+
         await enqueueSale(payload, clientSaleId);
+
         cart.clear();
 
         toast.warning(
-          "Se perdió la conexión. La venta quedó pendiente de sincronización."
+          "Venta guardada localmente. Verifica la sincronización al recuperar internet."
         );
+
+        router.push(`/pos/receipt/${clientSaleId}`);
       }
     } catch {
       toast.error(
-        "No se pudo guardar o completar la venta. El carrito se conserva."
+        "No se pudo guardar la venta localmente. El carrito se conserva."
       );
     } finally {
       setCheckingOut(false);
@@ -174,10 +230,13 @@ export default function PosPage() {
     return (
       <div className="max-w-lg mx-auto w-full flex flex-col items-center justify-center h-[calc(100vh-80px)] gap-3 p-4 text-center">
         <ShoppingBag size={48} className="text-muted-foreground" />
+
         <p className="text-lg font-semibold">El carrito está vacío</p>
+
         <p className="text-sm text-muted-foreground">
           Agrega productos desde la sección de inventario.
         </p>
+
         <Link href="/products">
           <Button>Ver inventario</Button>
         </Link>
@@ -190,6 +249,7 @@ export default function PosPage() {
       <div className="p-4 border-b flex items-center justify-between">
         <div>
           <h1 className="font-bold text-xl">Punto de venta</h1>
+
           <p className="text-xs text-muted-foreground">
             {cart.items.length}{" "}
             {cart.items.length === 1 ? "artículo" : "artículos"}
@@ -220,6 +280,7 @@ export default function PosPage() {
                   <p className="text-sm font-medium">
                     {cart.customer_name}
                   </p>
+
                   {cart.customer_phone && (
                     <p className="text-xs text-muted-foreground">
                       {cart.customer_phone}
@@ -273,7 +334,9 @@ export default function PosPage() {
                 <Input
                   placeholder="Buscar por nombre o teléfono..."
                   value={customerQuery}
-                  onChange={(e) => setCustomerQuery(e.target.value)}
+                  onChange={(event) =>
+                    setCustomerQuery(event.target.value)
+                  }
                 />
 
                 {customerResults.map((customer) => (
@@ -314,14 +377,18 @@ export default function PosPage() {
                 <Input
                   placeholder="Nombre del cliente *"
                   value={newCustomerName}
-                  onChange={(e) => setNewCustomerName(e.target.value)}
+                  onChange={(event) =>
+                    setNewCustomerName(event.target.value)
+                  }
                   maxLength={150}
                 />
 
                 <Input
                   placeholder="Teléfono (opcional)"
                   value={newCustomerPhone}
-                  onChange={(e) => setNewCustomerPhone(e.target.value)}
+                  onChange={(event) =>
+                    setNewCustomerPhone(event.target.value)
+                  }
                   type="tel"
                 />
 
@@ -357,9 +424,11 @@ export default function PosPage() {
             <div className="flex gap-2">
               <Select
                 value={cart.discount_type ?? "none"}
-                onValueChange={(v) =>
+                onValueChange={(value) =>
                   cart.setDiscount(
-                    v === "none" ? null : (v as DiscountType),
+                    value === "none"
+                      ? null
+                      : (value as DiscountType),
                     cart.discount_value
                   )
                 }
@@ -370,8 +439,12 @@ export default function PosPage() {
 
                 <SelectContent>
                   <SelectItem value="none">Sin descuento</SelectItem>
-                  <SelectItem value="flat">Cantidad fija (MXN)</SelectItem>
-                  <SelectItem value="percent">Porcentaje (%)</SelectItem>
+                  <SelectItem value="flat">
+                    Cantidad fija (MXN)
+                  </SelectItem>
+                  <SelectItem value="percent">
+                    Porcentaje (%)
+                  </SelectItem>
                 </SelectContent>
               </Select>
 
@@ -386,10 +459,10 @@ export default function PosPage() {
                       : "Importe"
                   }
                   value={cart.discount_value || ""}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     cart.setDiscount(
                       cart.discount_type,
-                      Number(e.target.value)
+                      Number(event.target.value)
                     )
                   }
                   className="flex-1"
@@ -405,7 +478,9 @@ export default function PosPage() {
               <Button
                 size="sm"
                 variant={
-                  cart.payment_method === "cash" ? "default" : "outline"
+                  cart.payment_method === "cash"
+                    ? "default"
+                    : "outline"
                 }
                 className="flex-1 gap-1.5"
                 onClick={() => cart.setPayment("cash")}
@@ -430,10 +505,11 @@ export default function PosPage() {
 
           <div className="space-y-1">
             <p className="text-sm font-medium">Observaciones</p>
+
             <Input
               placeholder="Nota opcional sobre la venta..."
               value={cart.notes}
-              onChange={(e) => cart.setNotes(e.target.value)}
+              onChange={(event) => cart.setNotes(event.target.value)}
             />
           </div>
 
@@ -488,7 +564,7 @@ function CartItemRow({ item }: { item: CartItem }) {
   function commitEdit() {
     const value = Number(priceInput);
 
-    if (!isNaN(value) && value >= 0) {
+    if (priceInput.trim() !== "" && Number.isFinite(value) && value >= 0) {
       cart.setPrice(item.key, value);
     }
 
@@ -510,11 +586,13 @@ function CartItemRow({ item }: { item: CartItem }) {
               min="0"
               step="0.01"
               value={priceInput}
-              onChange={(e) => setPriceInput(e.target.value)}
+              onChange={(event) =>
+                setPriceInput(event.target.value)
+              }
               onBlur={commitEdit}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitEdit();
-                if (e.key === "Escape") setEditingPrice(false);
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitEdit();
+                if (event.key === "Escape") setEditingPrice(false);
               }}
               className="text-xs border rounded px-1 py-0.5 w-28 mt-0.5"
               aria-label={`Precio de ${item.description}`}

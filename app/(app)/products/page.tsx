@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -26,6 +27,12 @@ import {
   isDefaultVariant,
   hasRealVariants,
 } from "@/lib/product-helpers";
+import {
+  saveCachedProducts,
+  getCachedProducts,
+  saveCachedCategories,
+  getCachedCategories,
+} from "@/lib/catalog-cache";
 import { Pencil, Trash2, Check, X } from "lucide-react";
 
 export default function ProductsPage() {
@@ -39,52 +46,159 @@ export default function ProductsPage() {
     null
   );
 
-  // Estado del diálogo para agregar productos al carrito
   const [cartDialog, setCartDialog] =
     useState<ProductWithVariants | null>(null);
   const [cartVariant, setCartVariant] =
     useState<ProductVariant | null>(null);
   const [cartQty, setCartQty] = useState("1");
 
-  // Estado del diálogo para administrar categorías
   const [catDialog, setCatDialog] = useState(false);
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
   const [editingCatName, setEditingCatName] = useState("");
   const [deletingCatId, setDeletingCatId] = useState<string | null>(null);
 
+  // Carga primero la caché local y después intenta actualizar desde el servidor.
   const loadProducts = useCallback(async () => {
+    let loadedFromCache = false;
+
+    try {
+      const cached = await getCachedProducts();
+
+      if (cached !== null && Array.isArray(cached)) {
+        setProducts(cached);
+        loadedFromCache = true;
+      }
+    } catch (error) {
+      console.error("Error al leer la caché de productos:", error);
+    }
+
+    if (!navigator.onLine) {
+      if (!loadedFromCache) {
+        toast.error(
+          "No hay una copia local del inventario. Conéctate a internet para cargarlo."
+        );
+      }
+
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await apiFetch("/api/products");
 
       if (!res.ok) {
-        throw new Error("No se pudieron cargar los productos.");
+        throw new Error(`Error HTTP ${res.status} al cargar productos.`);
       }
 
-      setProducts(await res.json());
-    } catch {
-      toast.error("No se pudieron cargar los productos.");
+      const data: unknown = await res.json();
+
+      if (!Array.isArray(data)) {
+        throw new Error("La respuesta de productos no es válida.");
+      }
+
+      const productsData = data as ProductWithVariants[];
+
+      setProducts(productsData);
+
+      try {
+        await saveCachedProducts(productsData);
+      } catch (cacheError) {
+        console.warn(
+          "Los productos se cargaron, pero no se pudo actualizar la caché:",
+          cacheError
+        );
+      }
+    } catch (error) {
+      console.error("Error al cargar productos del servidor:", error);
+
+      if (loadedFromCache) {
+        toast.info(
+          "No se pudo actualizar el inventario. Se muestra la última copia local."
+        );
+      } else {
+        toast.error(
+          "No se pudieron cargar los productos y no existe una copia local disponible."
+        );
+      }
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // Carga primero las categorías guardadas en el dispositivo.
   const loadCategories = useCallback(async () => {
+    let loadedFromCache = false;
+
+    try {
+      const cached = await getCachedCategories();
+
+      if (cached !== null && Array.isArray(cached)) {
+        setCategories(cached);
+        loadedFromCache = true;
+      }
+    } catch (error) {
+      console.error("Error al leer la caché de categorías:", error);
+    }
+
+    if (!navigator.onLine) {
+      if (!loadedFromCache) {
+        console.warn("No hay categorías disponibles en la caché local.");
+      }
+
+      return;
+    }
+
     try {
       const res = await apiFetch("/api/categories");
 
       if (!res.ok) {
-        throw new Error("No se pudieron cargar las categorías.");
+        throw new Error(`Error HTTP ${res.status} al cargar categorías.`);
       }
 
-      setCategories(await res.json());
-    } catch {
-      toast.error("No se pudieron cargar las categorías.");
+      const data: unknown = await res.json();
+
+      if (!Array.isArray(data)) {
+        throw new Error("La respuesta de categorías no es válida.");
+      }
+
+      const categoriesData = data as Category[];
+
+      setCategories(categoriesData);
+
+      try {
+        await saveCachedCategories(categoriesData);
+      } catch (cacheError) {
+        console.warn(
+          "Las categorías se cargaron, pero no se pudo actualizar la caché:",
+          cacheError
+        );
+      }
+    } catch (error) {
+      console.error("Error al cargar categorías del servidor:", error);
+
+      if (!loadedFromCache) {
+        console.warn(
+          "No se pudieron cargar las categorías ni recuperar una copia local."
+        );
+      }
     }
   }, []);
 
+  // Carga inicial y actualización cuando vuelve la conexión.
   useEffect(() => {
-    loadProducts();
-    loadCategories();
+    void loadProducts();
+    void loadCategories();
+
+    const handleOnline = () => {
+      void loadProducts();
+      void loadCategories();
+    };
+
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+    };
   }, [loadProducts, loadCategories]);
 
   const filteredProducts = products.filter((p) => {
@@ -118,10 +232,20 @@ export default function ProductsPage() {
   function confirmAddToCart() {
     if (!cartDialog || !cartVariant) return;
 
-    const qty = parseFloat(cartQty);
+    const qty = Number.parseFloat(cartQty);
 
     if (!Number.isFinite(qty) || qty <= 0) {
       toast.error("Ingresa una cantidad válida.");
+      return;
+    }
+
+    if (
+      cartDialog.track_stock &&
+      qty > cartVariant.stock_qty
+    ) {
+      toast.error(
+        `Existencias insuficientes. Disponibles: ${cartVariant.stock_qty}.`
+      );
       return;
     }
 
@@ -166,11 +290,16 @@ export default function ProductsPage() {
       toast.success(`Producto encontrado: ${match.name}`);
     } else {
       setSearch(code);
-      toast.error("El código no está registrado en el inventario.");
+      toast.error("El código no está registrado en el inventario local.");
     }
   }
 
   async function saveCatRename(id: string) {
+    if (!navigator.onLine) {
+      toast.error("Necesitas conexión a internet para modificar categorías.");
+      return;
+    }
+
     if (!editingCatName.trim()) {
       toast.error("Escribe el nombre de la categoría.");
       return;
@@ -183,10 +312,16 @@ export default function ProductsPage() {
       });
 
       if (!res.ok) {
-        const error = await res.json();
-        toast.error(
-          error.error ?? "No se pudo cambiar el nombre de la categoría."
-        );
+        let message = "No se pudo cambiar el nombre de la categoría.";
+
+        try {
+          const error = await res.json();
+          message = error.error ?? message;
+        } catch {
+          // La respuesta del servidor no contenía JSON.
+        }
+
+        toast.error(message);
         return;
       }
 
@@ -195,22 +330,35 @@ export default function ProductsPage() {
       setEditingCatName("");
 
       await Promise.all([loadCategories(), loadProducts()]);
-    } catch {
+    } catch (error) {
+      console.error("Error al renombrar categoría:", error);
       toast.error("Error de conexión al actualizar la categoría.");
     }
   }
 
   async function deleteCat(id: string) {
+    if (!navigator.onLine) {
+      toast.error("Necesitas conexión a internet para eliminar categorías.");
+      setDeletingCatId(null);
+      return;
+    }
+
     try {
       const res = await apiFetch(`/api/categories/${id}`, {
         method: "DELETE",
       });
 
       if (!res.ok) {
-        const error = await res.json();
-        toast.error(
-          error.error ?? "No se pudo eliminar la categoría."
-        );
+        let message = "No se pudo eliminar la categoría.";
+
+        try {
+          const error = await res.json();
+          message = error.error ?? message;
+        } catch {
+          // La respuesta del servidor no contenía JSON.
+        }
+
+        toast.error(message);
         setDeletingCatId(null);
         return;
       }
@@ -218,14 +366,13 @@ export default function ProductsPage() {
       toast.success("Categoría eliminada.");
       setDeletingCatId(null);
 
-      if (
-        selectedCategory === categories.find((c) => c.id === id)?.name
-      ) {
+      if (selectedCategory === categories.find((c) => c.id === id)?.name) {
         setSelectedCategory(null);
       }
 
       await Promise.all([loadCategories(), loadProducts()]);
-    } catch {
+    } catch (error) {
+      console.error("Error al eliminar categoría:", error);
       toast.error("Error de conexión al eliminar la categoría.");
       setDeletingCatId(null);
     }
@@ -240,11 +387,8 @@ export default function ProductsPage() {
 
   return (
     <div className="p-4 space-y-4 max-w-lg mx-auto">
-      {/* Encabezado */}
       <div className="flex items-center justify-between gap-2">
-        <h1 className="font-bold text-2xl tracking-tight">
-          Inventario
-        </h1>
+        <h1 className="font-bold text-2xl tracking-tight">Inventario</h1>
 
         <div className="flex gap-2">
           <Link href="/stock/adjust">
@@ -257,7 +401,6 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Búsqueda y filtro de categorías */}
       <div className="flex gap-2">
         <ScannerButton onScan={handleScan} />
 
@@ -278,7 +421,6 @@ export default function ProductsPage() {
         </Button>
       </div>
 
-      {/* Filtros por categoría */}
       {categories.length > 0 && (
         <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           <button
@@ -314,7 +456,6 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Lista de productos */}
       {loading ? (
         <p className="text-center text-muted-foreground py-8">
           Cargando inventario...
@@ -350,9 +491,7 @@ export default function ProductsPage() {
                               key={v.id}
                               className="flex text-xs text-muted-foreground"
                             >
-                              <span className="w-20">
-                                {v.size_label}
-                              </span>
+                              <span className="w-20">{v.size_label}</span>
 
                               <span className="w-24 ml-2">
                                 {formatCurrency(v.price)}
@@ -391,7 +530,6 @@ export default function ProductsPage() {
                     )}
                   </div>
 
-                  {/* Agregar al carrito */}
                   <Button
                     size="sm"
                     variant={isOutOfStock ? "destructive" : "default"}
@@ -417,7 +555,6 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Diálogo para agregar al carrito */}
       <Dialog
         open={!!cartDialog}
         onOpenChange={(open) => {
@@ -461,9 +598,7 @@ export default function ProductsPage() {
                       disabled={outOfStock}
                       className="w-full flex justify-between items-center p-3 border rounded-xl text-left disabled:opacity-50 hover:bg-muted/50 transition-colors cursor-pointer"
                     >
-                      <span className="font-medium">
-                        {v.size_label}
-                      </span>
+                      <span className="font-medium">{v.size_label}</span>
 
                       <span className="text-right">
                         <span className="font-bold">
@@ -501,12 +636,7 @@ export default function ProductsPage() {
                     variant="outline"
                     onClick={() =>
                       setCartQty((q) =>
-                        String(
-                          Math.max(
-                            0.1,
-                            (parseFloat(q) || 1) - 1
-                          )
-                        )
+                        String(Math.max(0.1, (Number.parseFloat(q) || 1) - 1))
                       )
                     }
                   >
@@ -529,7 +659,7 @@ export default function ProductsPage() {
                     variant="outline"
                     onClick={() =>
                       setCartQty((q) =>
-                        String((parseFloat(q) || 0) + 1)
+                        String((Number.parseFloat(q) || 0) + 1)
                       )
                     }
                   >
@@ -541,8 +671,7 @@ export default function ProductsPage() {
               <Button className="w-full" onClick={confirmAddToCart}>
                 Agregar al carrito ·{" "}
                 {formatCurrency(
-                  cartVariant.price *
-                    (parseFloat(cartQty) || 1)
+                  cartVariant.price * (Number.parseFloat(cartQty) || 1)
                 )}
               </Button>
             </div>
@@ -550,7 +679,6 @@ export default function ProductsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Diálogo para administrar categorías */}
       <Dialog
         open={catDialog}
         onOpenChange={(open) => {
@@ -583,12 +711,10 @@ export default function ProductsPage() {
                   <>
                     <Input
                       value={editingCatName}
-                      onChange={(e) =>
-                        setEditingCatName(e.target.value)
-                      }
+                      onChange={(e) => setEditingCatName(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
-                          saveCatRename(c.id);
+                          void saveCatRename(c.id);
                         }
 
                         if (e.key === "Escape") {
@@ -605,7 +731,7 @@ export default function ProductsPage() {
                       variant="ghost"
                       className="h-8 w-8"
                       aria-label="Guardar nombre"
-                      onClick={() => saveCatRename(c.id)}
+                      onClick={() => void saveCatRename(c.id)}
                     >
                       <Check size={14} />
                     </Button>
@@ -633,7 +759,7 @@ export default function ProductsPage() {
                       size="sm"
                       variant="destructive"
                       className="h-7 text-xs"
-                      onClick={() => deleteCat(c.id)}
+                      onClick={() => void deleteCat(c.id)}
                     >
                       Eliminar
                     </Button>

@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -7,12 +8,15 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { getLocalSale } from "@/lib/local-sales";
 import type { Sale, SaleItem, Customer, Device } from "@/types";
 
 type FullSale = Sale & {
   items: SaleItem[];
   customer: Customer | null;
   device: Device | null;
+  local_status?: "pending" | "synced";
+  server_sale_id?: string | null;
 };
 
 export default function ReceiptPage() {
@@ -21,45 +25,139 @@ export default function ReceiptPage() {
 
   const [sale, setSale] = useState<FullSale | null>(null);
   const [storeName, setStoreName] = useState("PuntoBase");
+  const [loading, setLoading] = useState(true);
+  const [isLocal, setIsLocal] = useState(false);
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      apiFetch(`/api/sales/${saleId}`).then((res) => res.json()),
-      apiFetch("/api/store-config").then((res) => res.json()),
-    ]).then(([saleData, config]) => {
-      setSale(saleData);
-      setStoreName(config.store_name ?? "PuntoBase");
-    });
+    let cancelled = false;
+
+    async function loadReceipt() {
+      setLoading(true);
+
+      try {
+        // Las ventas LOCAL- se buscan primero en IndexedDB.
+        if (saleId.startsWith("LOCAL-")) {
+          const localSale = await getLocalSale(saleId);
+
+          if (!localSale) {
+            if (!cancelled) {
+              setSale(null);
+              toast.error(
+                "No se encontró el recibo local en este dispositivo."
+              );
+            }
+            return;
+          }
+
+          if (!cancelled) {
+            setSale(localSale as FullSale);
+            setIsLocal(true);
+          }
+
+          return;
+        }
+
+        // Las ventas del servidor conservan su comportamiento habitual.
+        const [saleResponse, configResponse] = await Promise.all([
+          apiFetch(`/api/sales/${encodeURIComponent(saleId)}`),
+          apiFetch("/api/store-config"),
+        ]);
+
+        if (!saleResponse.ok) {
+          throw new Error("No se pudo cargar la venta.");
+        }
+
+        const saleData = await saleResponse.json();
+
+        let configName = "PuntoBase";
+
+        if (configResponse.ok) {
+          const config = await configResponse.json();
+          configName = config.store_name ?? "PuntoBase";
+        }
+
+        if (!cancelled) {
+          setSale(saleData as FullSale);
+          setStoreName(configName);
+          setIsLocal(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setSale(null);
+          toast.error(
+            navigator.onLine
+              ? "No se pudo cargar el recibo."
+              : "No se pudo cargar el recibo. Comprueba que la venta esté guardada en este dispositivo."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadReceipt();
+
+    return () => {
+      cancelled = true;
+    };
   }, [saleId]);
 
   async function confirmPayment() {
-    const res = await apiFetch(
-      `/api/sales/${saleId}/confirm-payment`,
-      { method: "POST" }
-    );
+    if (isLocal || confirmingPayment) return;
 
-    if (!res.ok) {
-      toast.error("No se pudo confirmar el pago.");
-      return;
+    setConfirmingPayment(true);
+
+    try {
+      const res = await apiFetch(
+        `/api/sales/${encodeURIComponent(saleId)}/confirm-payment`,
+        { method: "POST" }
+      );
+
+      if (!res.ok) {
+        toast.error("No se pudo confirmar el pago.");
+        return;
+      }
+
+      setSale((current) =>
+        current
+          ? {
+              ...current,
+              payment_status: "paid",
+              paid_at: new Date().toISOString(),
+            }
+          : current
+      );
+
+      toast.success("Pago confirmado correctamente.");
+    } catch {
+      toast.error("No hay conexión para confirmar el pago.");
+    } finally {
+      setConfirmingPayment(false);
     }
+  }
 
-    setSale((current) =>
-      current
-        ? {
-            ...current,
-            payment_status: "paid",
-            paid_at: new Date().toISOString(),
-          }
-        : current
+  if (loading) {
+    return (
+      <div className="p-6 text-center text-muted-foreground">
+        Cargando recibo de venta...
+      </div>
     );
-
-    toast.success("Pago confirmado correctamente.");
   }
 
   if (!sale) {
     return (
-      <div className="p-6 text-center text-muted-foreground">
-        Cargando recibo de venta...
+      <div className="max-w-sm mx-auto p-6 space-y-4 text-center">
+        <p className="font-semibold">No se pudo mostrar el recibo.</p>
+        <p className="text-sm text-muted-foreground">
+          Si es una venta offline, debe existir previamente en el
+          almacenamiento local de este dispositivo.
+        </p>
+        <Button className="w-full" onClick={() => router.push("/pos")}>
+          Volver al punto de venta
+        </Button>
       </div>
     );
   }
@@ -73,8 +171,23 @@ export default function ReceiptPage() {
         ? (subtotal * Number(sale.discount_value)) / 100
         : 0;
 
+  const pendingSync =
+    isLocal && sale.local_status !== "synced";
+
   return (
     <div className="max-w-sm mx-auto p-4 space-y-4">
+      {pendingSync && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <p className="font-semibold">
+            Venta guardada en este dispositivo
+          </p>
+          <p>
+            Está pendiente de sincronización. Conserva este dispositivo
+            hasta que la venta se sincronice.
+          </p>
+        </div>
+      )}
+
       {/* Recibo de venta */}
       <div
         id="receipt-print"
@@ -92,10 +205,8 @@ export default function ReceiptPage() {
 
         <div className="border-t border-dashed pt-3 space-y-1 text-sm">
           <div className="flex justify-between gap-3">
-            <span className="text-muted-foreground">
-              Folio de venta
-            </span>
-            <span className="font-mono font-bold">
+            <span className="text-muted-foreground">Folio de venta</span>
+            <span className="font-mono font-bold break-all text-right">
               {sale.sale_number}
             </span>
           </div>
@@ -111,12 +222,8 @@ export default function ReceiptPage() {
 
           {sale.customer && (
             <div className="flex justify-between gap-3">
-              <span className="text-muted-foreground">
-                Cliente
-              </span>
-              <span className="text-right">
-                {sale.customer.name}
-              </span>
+              <span className="text-muted-foreground">Cliente</span>
+              <span className="text-right">{sale.customer.name}</span>
             </div>
           )}
         </div>
@@ -128,16 +235,13 @@ export default function ReceiptPage() {
 
           {sale.items?.map((item) => (
             <div key={item.id}>
-              <p className="text-sm font-medium">
-                {item.description}
-              </p>
+              <p className="text-sm font-medium">{item.description}</p>
 
               <div className="flex justify-between gap-3 text-sm text-muted-foreground">
                 <span>
                   {item.qty} ×{" "}
                   {formatCurrency(Number(item.unit_price))}
                 </span>
-
                 <span className="font-medium text-foreground">
                   {formatCurrency(Number(item.line_total))}
                 </span>
@@ -148,9 +252,7 @@ export default function ReceiptPage() {
 
         <div className="border-t border-dashed pt-3 space-y-1 text-sm">
           <div className="flex justify-between gap-3">
-            <span className="text-muted-foreground">
-              Subtotal
-            </span>
+            <span className="text-muted-foreground">Subtotal</span>
             <span>{formatCurrency(subtotal)}</span>
           </div>
 
@@ -162,10 +264,7 @@ export default function ReceiptPage() {
                   ? ` (${sale.discount_value}%)`
                   : ""}
               </span>
-
-              <span>
-                −{formatCurrency(discountAmount)}
-              </span>
+              <span>−{formatCurrency(discountAmount)}</span>
             </div>
           )}
 
@@ -183,7 +282,6 @@ export default function ReceiptPage() {
 
           <div className="flex justify-between items-center gap-3 text-muted-foreground pt-1">
             <span>Forma de pago</span>
-
             <Badge variant="outline" className="font-normal">
               {sale.payment_method === "cash"
                 ? "💵 Efectivo"
@@ -199,18 +297,20 @@ export default function ReceiptPage() {
 
       {/* Acciones del recibo */}
       <div className="flex gap-2">
-        <Button
-          variant="outline"
-          className="flex-1"
-          onClick={() =>
-            window.open(
-              `/api/sales/${saleId}/pdf`,
-              "_blank"
-            )
-          }
-        >
-          Descargar PDF
-        </Button>
+        {!isLocal && (
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={() => {
+              window.open(
+                `/api/sales/${encodeURIComponent(saleId)}/pdf`,
+                "_blank"
+              );
+            }}
+          >
+            Descargar PDF
+          </Button>
+        )}
 
         <Button
           variant="outline"
@@ -221,27 +321,44 @@ export default function ReceiptPage() {
         </Button>
       </div>
 
-      {sale.payment_status === "pending" && (
+      {!isLocal && sale.payment_status === "pending" && (
         <Button
           className="w-full bg-green-600 hover:bg-green-700"
           onClick={confirmPayment}
+          disabled={confirmingPayment}
         >
-          Confirmar pago
+          {confirmingPayment ? "Confirmando..." : "Confirmar pago"}
         </Button>
       )}
 
-      <Button
-        className="w-full"
-        onClick={() => router.push("/pos")}
-      >
+      <Button className="w-full" onClick={() => router.push("/pos")}>
         Registrar nueva venta
       </Button>
 
       <style>{`
         @media print {
-          body > * { display: none !important; }
-          #receipt-print { display: block !important; }
-          @page { size: 80mm auto; margin: 0; }
+          body * {
+            visibility: hidden;
+          }
+
+          #receipt-print,
+          #receipt-print * {
+            visibility: visible;
+          }
+
+          #receipt-print {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 80mm;
+            max-width: 100%;
+            box-shadow: none;
+          }
+
+          @page {
+            size: 80mm auto;
+            margin: 0;
+          }
         }
       `}</style>
     </div>
