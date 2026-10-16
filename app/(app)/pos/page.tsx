@@ -22,6 +22,7 @@ import { enqueueSale, flushQueue } from "@/lib/offline-queue";
 import {
   createLocalSaleSnapshot,
   markLocalSaleSynced,
+  type LocalSale,
 } from "@/lib/local-sales";
 import type {
   Customer,
@@ -33,7 +34,10 @@ import type {
 export default function PosPage() {
   const router = useRouter();
   const cart = useCart();
+
   const [checkingOut, setCheckingOut] = useState(false);
+  const [offlineReceipt, setOfflineReceipt] =
+    useState<LocalSale | null>(null);
 
   const [customerMode, setCustomerMode] = useState<
     "none" | "search" | "new"
@@ -53,23 +57,35 @@ export default function PosPage() {
         (localId, saleId) => {
           void markLocalSaleSynced(localId, saleId)
             .then(() => {
-              if (active) {
-                toast.success(
-                  "Venta pendiente sincronizada correctamente."
-                );
-              }
+              if (!active) return;
+
+              setOfflineReceipt((previous) => {
+                if (!previous || previous.id !== localId) {
+                  return previous;
+                }
+
+                return {
+                  ...previous,
+                  local_status: "synced",
+                  server_sale_id: saleId,
+                };
+              });
+
+              toast.success(
+                "Venta pendiente sincronizada correctamente."
+              );
             })
             .catch(() => {
               if (active) {
                 toast.warning(
-                  "La venta se sincronizó, pero no se pudo actualizar el recibo local."
+                  "La venta se sincronizó, pero no se pudo actualizar el comprobante local."
                 );
               }
             });
         },
-        (_id: string, err: string) => {
+        (_id: string, error: string) => {
           if (active) {
-            toast.error(`Error al sincronizar la venta: ${err}`);
+            toast.error(`Error al sincronizar la venta: ${error}`);
           }
         }
       );
@@ -92,17 +108,18 @@ export default function PosPage() {
 
     const timeoutId = setTimeout(async () => {
       try {
-        const res = await apiFetch(
+        const response = await apiFetch(
           `/api/customers?q=${encodeURIComponent(customerQuery)}`
         );
 
-        if (res.ok) {
-          setCustomerResults(await res.json());
+        if (response.ok) {
+          setCustomerResults(await response.json());
         } else {
           setCustomerResults([]);
         }
       } catch {
         setCustomerResults([]);
+
         if (navigator.onLine) {
           toast.error("No se pudo realizar la búsqueda de clientes.");
         }
@@ -111,6 +128,32 @@ export default function PosPage() {
 
     return () => clearTimeout(timeoutId);
   }, [customerQuery, customerMode]);
+
+  async function saveOfflineSale(
+    payload: CreateSaleRequest,
+    localId: string,
+    subtotal: number,
+    total: number
+  ) {
+    // Guardar primero el comprobante completo en IndexedDB.
+    const localSale = await createLocalSaleSnapshot(
+      localId,
+      payload,
+      subtotal,
+      total
+    );
+
+    // Después registrar la venta para sincronizarla con el servidor.
+    await enqueueSale(payload, localId);
+
+    // Mostrar el comprobante sin navegar a otra ruta.
+    cart.clear();
+    setOfflineReceipt(localSale);
+
+    toast.success(
+      "Venta guardada en este dispositivo. Pendiente de sincronización."
+    );
+  }
 
   async function handleCheckout() {
     if (!cart.items.length || checkingOut) return;
@@ -152,27 +195,18 @@ export default function PosPage() {
           return;
         }
 
-        await createLocalSaleSnapshot(
-          clientSaleId,
+        await saveOfflineSale(
           payload,
+          clientSaleId,
           cart.subtotal,
           cart.total
         );
 
-        await enqueueSale(payload, clientSaleId);
-
-        cart.clear();
-
-        toast.success(
-          "Venta guardada localmente. Pendiente de sincronización."
-        );
-
-        router.push(`/pos/receipt/${clientSaleId}`);
         return;
       }
 
       try {
-        const res = await apiFetch("/api/sales", {
+        const response = await apiFetch("/api/sales", {
           method: "POST",
           body: JSON.stringify({
             ...payload,
@@ -180,9 +214,9 @@ export default function PosPage() {
           }),
         });
 
-        const data = await res.json();
+        const data = await response.json();
 
-        if (!res.ok) {
+        if (!response.ok) {
           toast.error(
             data.error ?? "No se pudo completar la venta."
           );
@@ -199,25 +233,18 @@ export default function PosPage() {
           return;
         }
 
-        // Conserva el mismo identificador para el reintento.
-        await createLocalSaleSnapshot(
-          clientSaleId,
+        // Si falló la petición, conserva el mismo identificador
+        // para que el reintento no genere otra venta.
+        await saveOfflineSale(
           payload,
+          clientSaleId,
           cart.subtotal,
           cart.total
         );
-
-        await enqueueSale(payload, clientSaleId);
-
-        cart.clear();
-
-        toast.warning(
-          "Venta guardada localmente. Verifica la sincronización al recuperar internet."
-        );
-
-        router.push(`/pos/receipt/${clientSaleId}`);
       }
-    } catch {
+    } catch (error) {
+      console.error("Error al completar la venta:", error);
+
       toast.error(
         "No se pudo guardar la venta localmente. El carrito se conserva."
       );
@@ -226,12 +253,170 @@ export default function PosPage() {
     }
   }
 
+  // Comprobante local: no depende de una nueva ruta de Next.js.
+  if (offlineReceipt) {
+    return (
+      <div className="max-w-lg mx-auto w-full p-4 space-y-4">
+        <div className="text-center space-y-2">
+          <div className="flex justify-center">
+            <ShoppingBag
+              size={40}
+              className="text-muted-foreground"
+            />
+          </div>
+
+          <h1 className="text-xl font-bold">
+            Comprobante de venta
+          </h1>
+
+          <p className="text-sm text-muted-foreground">
+            Folio: {offlineReceipt.sale_number}
+          </p>
+
+          {offlineReceipt.local_status === "pending" ? (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+              <p className="text-sm font-medium">
+                Venta guardada en este dispositivo
+              </p>
+              <p className="text-xs mt-1">
+                Está pendiente de sincronización. Conserva este
+                dispositivo hasta que la venta se sincronice.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-green-600/30 bg-green-600/10 p-3">
+              <p className="text-sm font-medium">
+                Venta sincronizada correctamente
+              </p>
+              {offlineReceipt.server_sale_id && (
+                <p className="text-xs mt-1">
+                  Folio del servidor: {offlineReceipt.server_sale_id}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="border rounded-xl p-4 space-y-4">
+          <div className="text-sm space-y-1">
+            <p>
+              <span className="font-medium">Fecha: </span>
+              {new Date(offlineReceipt.created_at).toLocaleString()}
+            </p>
+
+            {offlineReceipt.customer && (
+              <p>
+                <span className="font-medium">Cliente: </span>
+                {offlineReceipt.customer.name}
+              </p>
+            )}
+
+            {offlineReceipt.customer?.phone && (
+              <p>
+                <span className="font-medium">Teléfono: </span>
+                {offlineReceipt.customer.phone}
+              </p>
+            )}
+          </div>
+
+          <div className="border-t border-b py-3 space-y-3">
+            {offlineReceipt.items.map((item) => (
+              <div
+                key={item.id}
+                className="flex justify-between items-start gap-3 text-sm"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium break-words">
+                    {item.description}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {item.qty} × {formatCurrency(item.unit_price)}
+                  </p>
+                </div>
+
+                <p className="font-medium whitespace-nowrap">
+                  {formatCurrency(item.line_total)}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span>Subtotal</span>
+              <span>{formatCurrency(offlineReceipt.subtotal)}</span>
+            </div>
+
+            {offlineReceipt.discount_value > 0 && (
+              <div className="flex justify-between text-sm">
+                <span>Descuento</span>
+                <span>
+                  {offlineReceipt.discount_type === "percent"
+                    ? `${offlineReceipt.discount_value}%`
+                    : formatCurrency(offlineReceipt.discount_value)}
+                </span>
+              </div>
+            )}
+
+            <div className="flex justify-between border-t pt-2 font-bold text-lg">
+              <span>Total</span>
+              <span>{formatCurrency(offlineReceipt.total)}</span>
+            </div>
+          </div>
+
+          <div className="border-t pt-3 text-sm space-y-1">
+            <p>
+              <span className="font-medium">Forma de pago: </span>
+              {offlineReceipt.payment_method === "cash"
+                ? "Efectivo"
+                : "Transferencia"}
+            </p>
+
+            <p>
+              <span className="font-medium">Estado del pago: </span>
+              {offlineReceipt.payment_status === "paid"
+                ? "Pagado"
+                : "Pendiente"}
+            </p>
+
+            {offlineReceipt.notes && (
+              <p>
+                <span className="font-medium">Observaciones: </span>
+                {offlineReceipt.notes}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <Button
+          className="w-full"
+          variant="outline"
+          onClick={() => window.print()}
+        >
+          Imprimir comprobante
+        </Button>
+
+        <Button
+          className="w-full"
+          onClick={() => setOfflineReceipt(null)}
+        >
+          Nueva venta
+        </Button>
+      </div>
+    );
+  }
+
   if (cart.items.length === 0) {
     return (
       <div className="max-w-lg mx-auto w-full flex flex-col items-center justify-center h-[calc(100vh-80px)] gap-3 p-4 text-center">
-        <ShoppingBag size={48} className="text-muted-foreground" />
+        <ShoppingBag
+          size={48}
+          className="text-muted-foreground"
+        />
 
-        <p className="text-lg font-semibold">El carrito está vacío</p>
+        <p className="text-lg font-semibold">
+          El carrito está vacío
+        </p>
 
         <p className="text-sm text-muted-foreground">
           Agrega productos desde la sección de inventario.
@@ -248,7 +433,9 @@ export default function PosPage() {
     <div className="max-w-lg mx-auto w-full flex flex-col h-[calc(100vh-80px)]">
       <div className="p-4 border-b flex items-center justify-between">
         <div>
-          <h1 className="font-bold text-xl">Punto de venta</h1>
+          <h1 className="font-bold text-xl">
+            Punto de venta
+          </h1>
 
           <p className="text-xs text-muted-foreground">
             {cart.items.length}{" "}
@@ -329,93 +516,97 @@ export default function PosPage() {
               </div>
             )}
 
-            {customerMode === "search" && !cart.customer_name && (
-              <div className="space-y-1">
-                <Input
-                  placeholder="Buscar por nombre o teléfono..."
-                  value={customerQuery}
-                  onChange={(event) =>
-                    setCustomerQuery(event.target.value)
-                  }
-                />
+            {customerMode === "search" &&
+              !cart.customer_name && (
+                <div className="space-y-1">
+                  <Input
+                    placeholder="Buscar por nombre o teléfono..."
+                    value={customerQuery}
+                    onChange={(event) =>
+                      setCustomerQuery(event.target.value)
+                    }
+                  />
 
-                {customerResults.map((customer) => (
-                  <button
-                    key={customer.id}
-                    type="button"
-                    className="w-full text-left p-2 rounded-lg bg-muted/50 text-sm cursor-pointer hover:bg-muted transition-colors"
+                  {customerResults.map((customer) => (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      className="w-full text-left p-2 rounded-lg bg-muted/50 text-sm cursor-pointer hover:bg-muted transition-colors"
+                      onClick={() => {
+                        cart.setCustomer(
+                          customer.id,
+                          customer.name,
+                          customer.phone ?? ""
+                        );
+                        setCustomerMode("none");
+                        setCustomerQuery("");
+                      }}
+                    >
+                      {customer.name}
+                      {customer.phone && (
+                        <span className="text-muted-foreground">
+                          {" "}· {customer.phone}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+
+                  {customerQuery.trim() &&
+                    customerResults.length === 0 && (
+                      <p className="text-xs text-muted-foreground p-2">
+                        No se encontraron clientes.
+                      </p>
+                    )}
+                </div>
+              )}
+
+            {customerMode === "new" &&
+              !cart.customer_name && (
+                <div className="space-y-2">
+                  <Input
+                    placeholder="Nombre del cliente *"
+                    value={newCustomerName}
+                    onChange={(event) =>
+                      setNewCustomerName(event.target.value)
+                    }
+                    maxLength={150}
+                  />
+
+                  <Input
+                    placeholder="Teléfono (opcional)"
+                    value={newCustomerPhone}
+                    onChange={(event) =>
+                      setNewCustomerPhone(event.target.value)
+                    }
+                    type="tel"
+                  />
+
+                  <Button
+                    size="sm"
+                    className="w-full"
                     onClick={() => {
+                      if (!newCustomerName.trim()) {
+                        toast.error(
+                          "Ingresa el nombre del cliente."
+                        );
+                        return;
+                      }
+
                       cart.setCustomer(
-                        customer.id,
-                        customer.name,
-                        customer.phone ?? ""
+                        null,
+                        newCustomerName.trim(),
+                        newCustomerPhone.trim()
                       );
+
                       setCustomerMode("none");
-                      setCustomerQuery("");
+                      setNewCustomerName("");
+                      setNewCustomerPhone("");
                     }}
                   >
-                    {customer.name}
-                    {customer.phone && (
-                      <span className="text-muted-foreground">
-                        {" "}· {customer.phone}
-                      </span>
-                    )}
-                  </button>
-                ))}
-
-                {customerQuery.trim() &&
-                  customerResults.length === 0 && (
-                    <p className="text-xs text-muted-foreground p-2">
-                      No se encontraron clientes.
-                    </p>
-                  )}
-              </div>
-            )}
-
-            {customerMode === "new" && !cart.customer_name && (
-              <div className="space-y-2">
-                <Input
-                  placeholder="Nombre del cliente *"
-                  value={newCustomerName}
-                  onChange={(event) =>
-                    setNewCustomerName(event.target.value)
-                  }
-                  maxLength={150}
-                />
-
-                <Input
-                  placeholder="Teléfono (opcional)"
-                  value={newCustomerPhone}
-                  onChange={(event) =>
-                    setNewCustomerPhone(event.target.value)
-                  }
-                  type="tel"
-                />
-
-                <Button
-                  size="sm"
-                  className="w-full"
-                  onClick={() => {
-                    if (!newCustomerName.trim()) {
-                      toast.error("Ingresa el nombre del cliente.");
-                      return;
-                    }
-
-                    cart.setCustomer(
-                      null,
-                      newCustomerName.trim(),
-                      newCustomerPhone.trim()
-                    );
-
-                    setCustomerMode("none");
-                    setNewCustomerName("");
-                    setNewCustomerPhone("");
-                  }}
-                >
-                  Confirmar cliente
-                </Button>
-              </div>
-            )}
+                    Confirmar cliente
+                  </Button>
+                </div>
+              )}
           </div>
 
           <div className="space-y-2">
@@ -438,7 +629,9 @@ export default function PosPage() {
                 </SelectTrigger>
 
                 <SelectContent>
-                  <SelectItem value="none">Sin descuento</SelectItem>
+                  <SelectItem value="none">
+                    Sin descuento
+                  </SelectItem>
                   <SelectItem value="flat">
                     Cantidad fija (MXN)
                   </SelectItem>
@@ -496,7 +689,9 @@ export default function PosPage() {
                     : "outline"
                 }
                 className="flex-1 gap-1.5"
-                onClick={() => cart.setPayment("bank_transfer")}
+                onClick={() =>
+                  cart.setPayment("bank_transfer")
+                }
               >
                 <Building2 size={14} /> Transferencia
               </Button>
@@ -509,7 +704,9 @@ export default function PosPage() {
             <Input
               placeholder="Nota opcional sobre la venta..."
               value={cart.notes}
-              onChange={(event) => cart.setNotes(event.target.value)}
+              onChange={(event) =>
+                cart.setNotes(event.target.value)
+              }
             />
           </div>
 
@@ -522,7 +719,9 @@ export default function PosPage() {
             {cart.discountAmount > 0 && (
               <div className="flex justify-between text-sm text-red-500">
                 <span>Descuento</span>
-                <span>−{formatCurrency(cart.discountAmount)}</span>
+                <span>
+                  −{formatCurrency(cart.discountAmount)}
+                </span>
               </div>
             )}
 
@@ -564,7 +763,11 @@ function CartItemRow({ item }: { item: CartItem }) {
   function commitEdit() {
     const value = Number(priceInput);
 
-    if (priceInput.trim() !== "" && Number.isFinite(value) && value >= 0) {
+    if (
+      priceInput.trim() !== "" &&
+      Number.isFinite(value) &&
+      value >= 0
+    ) {
       cart.setPrice(item.key, value);
     }
 
@@ -592,7 +795,9 @@ function CartItemRow({ item }: { item: CartItem }) {
               onBlur={commitEdit}
               onKeyDown={(event) => {
                 if (event.key === "Enter") commitEdit();
-                if (event.key === "Escape") setEditingPrice(false);
+                if (event.key === "Escape") {
+                  setEditingPrice(false);
+                }
               }}
               className="text-xs border rounded px-1 py-0.5 w-28 mt-0.5"
               aria-label={`Precio de ${item.description}`}
@@ -620,19 +825,25 @@ function CartItemRow({ item }: { item: CartItem }) {
           variant="outline"
           className="h-9 w-9 text-base"
           aria-label={`Disminuir cantidad de ${item.description}`}
-          onClick={() => cart.setQty(item.key, item.qty - 1)}
+          onClick={() =>
+            cart.setQty(item.key, item.qty - 1)
+          }
         >
           −
         </Button>
 
-        <span className="w-6 text-center text-sm">{item.qty}</span>
+        <span className="w-6 text-center text-sm">
+          {item.qty}
+        </span>
 
         <Button
           size="icon"
           variant="outline"
           className="h-9 w-9 text-base"
           aria-label={`Aumentar cantidad de ${item.description}`}
-          onClick={() => cart.setQty(item.key, item.qty + 1)}
+          onClick={() =>
+            cart.setQty(item.key, item.qty + 1)
+          }
         >
           +
         </Button>
