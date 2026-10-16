@@ -9,10 +9,8 @@ const withPWA = withPWAInit({
   reloadOnOnline: true,
   disable: process.env.NODE_ENV === "development",
 
-  // Conserva las estrategias de caché predeterminadas de Next PWA.
   extendDefaultRuntimeCaching: true,
 
-  // Página que se mostrará si no se puede cargar una ruta sin conexión.
   fallbacks: {
     document: "/~offline",
   },
@@ -21,7 +19,7 @@ const withPWA = withPWAInit({
     disableDevLogs: true,
     runtimeCaching: [
       {
-        urlPattern: /^\/api\/(products|categories|customers)/,
+        urlPattern: /\/api\/(products|categories|customers)(?:\/|$|\?)/,
         handler: "StaleWhileRevalidate",
         options: {
           cacheName: "api-cache",
