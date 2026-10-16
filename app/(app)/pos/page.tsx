@@ -34,16 +34,25 @@ export default function PosPage() {
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
 
   useEffect(() => {
-    const handleOnline = () => {
-      flushQueue(
-        () => toast.success("Venta pendiente sincronizada correctamente."),
-        (_id: string, err: string) =>
-          toast.error(`Error al sincronizar la venta: ${err}`),
+    const syncPendingSales = () => {
+      if (!navigator.onLine) return;
+
+      void flushQueue(
+        () => {
+          toast.success("Venta pendiente sincronizada correctamente.");
+        },
+        (_id: string, err: string) => {
+          toast.error(`Error al sincronizar la venta: ${err}`);
+        }
       );
     };
 
-    window.addEventListener("online", handleOnline);
-    return () => window.removeEventListener("online", handleOnline);
+    window.addEventListener("online", syncPendingSales);
+    syncPendingSales();
+
+    return () => {
+      window.removeEventListener("online", syncPendingSales);
+    };
   }, []);
 
   useEffect(() => {
@@ -57,7 +66,10 @@ export default function PosPage() {
         const res = await apiFetch(
           `/api/customers?q=${encodeURIComponent(customerQuery)}`
         );
-        if (res.ok) setCustomerResults(await res.json());
+
+        if (res.ok) {
+          setCustomerResults(await res.json());
+        }
       } catch {
         toast.error("No se pudo realizar la búsqueda de clientes.");
       }
@@ -67,7 +79,7 @@ export default function PosPage() {
   }, [customerQuery, customerMode]);
 
   async function handleCheckout() {
-    if (!cart.items.length) return;
+    if (!cart.items.length || checkingOut) return;
 
     setCheckingOut(true);
 
@@ -95,47 +107,64 @@ export default function PosPage() {
       notes: cart.notes,
     };
 
-    if (!navigator.onLine) {
-      if (cart.payment_method !== "cash") {
-        toast.error(
-          "Las transferencias requieren conexión a internet."
+    const clientSaleId = `LOCAL-${crypto.randomUUID()}`;
+
+    try {
+      if (!navigator.onLine) {
+        if (cart.payment_method !== "cash") {
+          toast.error(
+            "Las transferencias requieren conexión a internet."
+          );
+          return;
+        }
+
+        await enqueueSale(payload, clientSaleId);
+        cart.clear();
+
+        toast.success(
+          "Venta guardada en este dispositivo. Se sincronizará cuando vuelva internet."
         );
-        setCheckingOut(false);
+
         return;
       }
 
       try {
-        await enqueueSale(payload);
+        const res = await apiFetch("/api/sales", {
+          method: "POST",
+          body: JSON.stringify({
+            ...payload,
+            client_sale_id: clientSaleId,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          toast.error(data.error ?? "No se pudo completar la venta.");
+          return;
+        }
+
         cart.clear();
-        toast.success(
-          "Venta guardada sin conexión. Se sincronizará cuando vuelva internet."
-        );
+        router.push(`/pos/receipt/${data.id}`);
       } catch {
-        toast.error("No se pudo guardar la venta sin conexión.");
-      } finally {
-        setCheckingOut(false);
+        if (cart.payment_method !== "cash") {
+          toast.error(
+            "No se pudo confirmar el resultado de la transferencia. Verifica la venta antes de volver a cobrar."
+          );
+          return;
+        }
+
+        await enqueueSale(payload, clientSaleId);
+        cart.clear();
+
+        toast.warning(
+          "Se perdió la conexión. La venta quedó pendiente de sincronización."
+        );
       }
-
-      return;
-    }
-
-    try {
-      const res = await apiFetch("/api/sales", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        toast.error(data.error ?? "No se pudo completar la venta.");
-        return;
-      }
-
-      cart.clear();
-      router.push(`/pos/receipt/${data.id}`);
     } catch {
-      toast.error("Error de conexión. Intenta nuevamente.");
+      toast.error(
+        "No se pudo guardar o completar la venta. El carrito se conserva."
+      );
     } finally {
       setCheckingOut(false);
     }
@@ -158,7 +187,6 @@ export default function PosPage() {
 
   return (
     <div className="max-w-lg mx-auto w-full flex flex-col h-[calc(100vh-80px)]">
-      {/* Encabezado */}
       <div className="p-4 border-b flex items-center justify-between">
         <div>
           <h1 className="font-bold text-xl">Punto de venta</h1>
@@ -175,17 +203,14 @@ export default function PosPage() {
         </Link>
       </div>
 
-      {/* Contenido desplazable */}
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-5">
-          {/* Productos del carrito */}
           <div className="space-y-2">
             {cart.items.map((item) => (
               <CartItemRow key={item.key} item={item} />
             ))}
           </div>
 
-          {/* Cliente */}
           <div className="space-y-2">
             <p className="text-sm font-medium">Cliente</p>
 
@@ -326,7 +351,6 @@ export default function PosPage() {
             )}
           </div>
 
-          {/* Descuento */}
           <div className="space-y-2">
             <p className="text-sm font-medium">Descuento</p>
 
@@ -374,7 +398,6 @@ export default function PosPage() {
             </div>
           </div>
 
-          {/* Forma de pago */}
           <div className="space-y-2">
             <p className="text-sm font-medium">Forma de pago</p>
 
@@ -405,7 +428,6 @@ export default function PosPage() {
             </div>
           </div>
 
-          {/* Observaciones */}
           <div className="space-y-1">
             <p className="text-sm font-medium">Observaciones</p>
             <Input
@@ -415,7 +437,6 @@ export default function PosPage() {
             />
           </div>
 
-          {/* Resumen de la venta */}
           <div className="bg-muted rounded-xl p-3 space-y-1">
             <div className="flex justify-between text-sm">
               <span>Subtotal</span>
@@ -425,9 +446,7 @@ export default function PosPage() {
             {cart.discountAmount > 0 && (
               <div className="flex justify-between text-sm text-red-500">
                 <span>Descuento</span>
-                <span>
-                  −{formatCurrency(cart.discountAmount)}
-                </span>
+                <span>−{formatCurrency(cart.discountAmount)}</span>
               </div>
             )}
 
@@ -439,7 +458,6 @@ export default function PosPage() {
         </div>
       </div>
 
-      {/* Botón para completar la venta */}
       <div className="p-4 border-t bg-background">
         <Button
           className="w-full h-12 text-base"

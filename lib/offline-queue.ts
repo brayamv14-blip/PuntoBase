@@ -13,6 +13,7 @@ export interface PendingSale {
 }
 
 let _db: IDBPDatabase | null = null;
+let isFlushing = false;
 
 async function getDB() {
   if (!_db) {
@@ -24,13 +25,23 @@ async function getDB() {
       },
     });
   }
+
   return _db;
 }
 
-export async function enqueueSale(payload: CreateSaleRequest): Promise<string> {
+export async function enqueueSale(
+  payload: CreateSaleRequest,
+  existingLocalId?: string
+): Promise<string> {
   const db = await getDB();
-  const localId = `LOCAL-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const entry: PendingSale = { localId, payload, createdAt: new Date().toISOString() };
+  const localId = existingLocalId ?? `LOCAL-${crypto.randomUUID()}`;
+
+  const entry: PendingSale = {
+    localId,
+    payload,
+    createdAt: new Date().toISOString(),
+  };
+
   await db.put(STORE, entry);
   return localId;
 }
@@ -40,7 +51,7 @@ export async function getPendingSales(): Promise<PendingSale[]> {
   return db.getAll(STORE);
 }
 
-export async function deletePendingSale(localId: string) {
+export async function deletePendingSale(localId: string): Promise<void> {
   const db = await getDB();
   await db.delete(STORE, localId);
 }
@@ -48,24 +59,45 @@ export async function deletePendingSale(localId: string) {
 export async function flushQueue(
   onSuccess: (localId: string, saleId: string) => void,
   onError: (localId: string, error: string) => void
-) {
-  const pending = await getPendingSales();
-  for (const entry of pending) {
-    try {
-      const res = await apiFetch("/api/sales", {
-        method: "POST",
-        body: JSON.stringify(entry.payload),
-      });
-      if (res.ok) {
+): Promise<void> {
+  if (isFlushing || !navigator.onLine) return;
+
+  isFlushing = true;
+
+  try {
+    const pending = await getPendingSales();
+
+    for (const entry of pending) {
+      if (!navigator.onLine) break;
+
+      try {
+        const res = await apiFetch("/api/sales", {
+          method: "POST",
+          body: JSON.stringify({
+            ...entry.payload,
+            client_sale_id: entry.localId,
+          }),
+        });
+
         const data = await res.json();
-        await deletePendingSale(entry.localId);
-        onSuccess(entry.localId, data.id);
-      } else {
-        const data = await res.json();
-        onError(entry.localId, data.error ?? "Sync failed");
+
+        if (res.ok && data.id) {
+          await deletePendingSale(entry.localId);
+          onSuccess(entry.localId, data.id);
+        } else {
+          onError(
+            entry.localId,
+            data.error ?? "No se pudo sincronizar la venta."
+          );
+        }
+      } catch {
+        onError(
+          entry.localId,
+          "Error de conexión durante la sincronización."
+        );
       }
-    } catch {
-      onError(entry.localId, "Network error during sync");
     }
+  } finally {
+    isFlushing = false;
   }
 }
