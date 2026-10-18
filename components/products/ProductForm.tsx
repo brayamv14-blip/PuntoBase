@@ -9,6 +9,8 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { ScannerButton } from "@/components/scanner/Scanner";
+import { QrLabelButton } from "@/components/products/QrLabelButton";
+import { ProductImageField } from "@/components/products/ProductImageField";
 import { enqueueOp, type UpdateProductPayload } from "@/lib/offline-ops";
 import { patchCachedProduct } from "@/lib/catalog-cache";
 import type { Product, ProductVariant, Category } from "@/types";
@@ -23,6 +25,7 @@ export function ProductForm({ product }: ProductFormProps) {
 
   const [name, setName] = useState(product?.name ?? "");
   const [barcode, setBarcode] = useState(product?.barcode ?? "");
+  const [imageUrl, setImageUrl] = useState<string | null>(product?.image_url ?? null);
   const [categoryInput, setCategoryInput] = useState(product?.category?.name ?? "");
   const [categoryId, setCategoryId] = useState(product?.category_id ?? null as string | null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -289,6 +292,14 @@ export function ProductForm({ product }: ProductFormProps) {
         }
       }
 
+      // Imagen (Cloudinary): se guarda aparte, solo si cambio.
+      if (imageUrl !== (product?.image_url ?? null)) {
+        await apiFetch("/api/products/image", {
+          method: "POST",
+          body: JSON.stringify({ product_id: productId, image_url: imageUrl }),
+        });
+      }
+
       toast.success(isEdit ? "Producto actualizado correctamente" : "Producto agregado correctamente");
       router.push("/products");
       router.refresh();
@@ -319,7 +330,12 @@ export function ProductForm({ product }: ProductFormProps) {
           <Input placeholder="Escanea o escribe el código" value={barcode} onChange={(e) => setBarcode(e.target.value)} />
           <ScannerButton onScan={setBarcode} />
         </div>
+        <div className="pt-1">
+          <QrLabelButton code={barcode} name={name} onGenerate={setBarcode} />
+        </div>
       </div>
+
+      <ProductImageField value={imageUrl} onChange={setImageUrl} />
 
       {/* Categoría */}
       <div className="space-y-1 relative">

@@ -2,7 +2,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
+import {
+  Html5Qrcode,
+  Html5QrcodeScannerState,
+  Html5QrcodeSupportedFormats,
+} from "html5-qrcode";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -71,7 +75,20 @@ function ScannerView({ onScan }: { onScan: (code: string) => void }) {
     let disposed = false;
     let started = false;
 
-    const scanner = new Html5Qrcode(regionId);
+    // QR + codigos comerciales (UPC/EAN, Code 128). Si el navegador tiene la API
+    // nativa BarcodeDetector, html5-qrcode la usa en lugar del decodificador JS.
+    const scanner = new Html5Qrcode(regionId, {
+      verbose: false,
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.QR_CODE,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+      ],
+      useBarCodeDetectorIfSupported: true,
+    });
 
     const startPromise = scanner
       .start(

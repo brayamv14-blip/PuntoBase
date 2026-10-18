@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
 import type { CreateSaleRequest, PaymentMethod } from "@/types";
 import { ensureOpenCashRegister } from "@/lib/cash-register";
+import { notifySaleEvents } from "@/lib/push-events";
 
 type SaleRequestWithClientId = CreateSaleRequest & {
   client_sale_id?: string;
@@ -434,6 +435,9 @@ async function processSaleItems(
     }
 
     await ensureOpenCashRegister();
+
+    // Notificaciones push (transferencia pendiente, inventario bajo/agotado).
+    after(() => notifySaleEvents(sale.id, insertedVariantChanges));
 
     return NextResponse.json({ id: sale.id }, { status: 201 });
   } catch (error) {

@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
 import { getYesterdayOpeningBalance } from "@/lib/cash-register";
+import { notifyCashDiscrepancy } from "@/lib/push-events";
 import { dayEndISO, dayStartISO, isDateOnly, todayDateString } from "@/lib/utils";
 
 export async function POST(req: NextRequest) {
@@ -62,5 +63,9 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Notificacion push si el corte cerro con faltante o sobrante.
+  after(() => notifyCashDiscrepancy(Number(discrepancy)));
+
   return NextResponse.json(data);
 }

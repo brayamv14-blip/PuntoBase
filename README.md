@@ -2,68 +2,68 @@
 
 Proyecto de la materia *Aplicaciones Web Progresivas* (DGS 1002, UTFV, profesora Sandra Alfaro Linares).
 PWA offline-first para controlar inventario con códigos QR/barras, ventas en mostrador (efectivo y
-transferencia), corte de caja y estadísticas, pensada para pequeños negocios con internet inestable.
+transferencia), corte de caja, estadísticas, catálogo web y notificaciones push, pensada para
+pequeños negocios con internet inestable.
 
 > Base de código: [ardiChuan/POS-StockManagement](https://github.com/ardiChuan/POS-StockManagement)
 > (el repositorio original no declara licencia; se usa como punto de partida con conocimiento de la
-> profesora y se documentan abajo los cambios del equipo).
+> profesora). Los cambios del equipo están descritos al final.
 
 ## Funcionalidades
 
 | Módulo | Qué hace |
 |---|---|
-| Escáner QR/barras | `html5-qrcode` con la cámara trasera. Se usa para dar de alta productos, buscar en inventario y **agregar al carrito en el POS**. |
-| Semáforo de inventario | Verde (sobre el mínimo), amarillo (igual o menor al mínimo), rojo (agotado; bloquea la venta). `lib/stock-status.ts`. |
-| Ventas | Efectivo (cobrada al instante) y transferencia (**pendiente** hasta "Confirmar pago" en la **bandeja Transferencias**). Ambas funcionan sin conexión. Descuenta inventario al vender. |
-| Corte de caja | Efectivo esperado = fondo inicial + ventas en efectivo − gastos; diferencia contra lo contado; **desglose de transferencias confirmadas y pendientes**. |
-| Dashboard | Ventas por día (7 días), ventas por hora (hoy), **Top 10 más vendidos**, alertas de inventario bajo y **lista de compras** con un clic. |
-| Catálogo web | Página pública `/catalogo` (nombre, precio y disponibilidad; sin cantidades exactas). Se comparte desde el dashboard. |
-| Offline-first | Catálogo, ventas, altas y **ediciones** de producto y corte de caja se guardan primero en IndexedDB. |
-| Sincronización | **Background Sync API** (`worker/index.ts`) + respaldo con el evento `online` y botón "Sincronizar ahora". Ventas idempotentes con `client_sale_id`, altas con `client_id`. Operaciones rechazadas se pueden reintentar o descartar. |
-| Instalación | Manifest completo (iconos 192/512 y *maskable*, accesos directos), botón "Instalar" (Chrome/Edge/Android) e instrucciones para iOS, y almacenamiento persistente (`components/layout/PwaSetup.tsx`). |
-| Zona horaria y moneda | Días, cortes y reportes en hora de la Ciudad de México; montos en pesos (MXN). `lib/utils.ts`. |
+| Escáner QR/barras | `html5-qrcode` con la cámara trasera (usa `BarcodeDetector` nativo si existe). Sirve para dar de alta, buscar en inventario y **agregar al carrito en el POS**. |
+| QR propios | Genera un código `PB-XXXXXXXX` para productos sin código de fábrica e imprime la etiqueta. |
+| Semáforo de inventario | Verde, amarillo (igual o menor al mínimo) y rojo (agotado: bloquea la venta). |
+| Ventas | Efectivo (cobrada al instante) y transferencia (**pendiente** hasta "Confirmar pago" en la bandeja **Transferencias**). Ambas funcionan sin conexión. |
+| Corte de caja | Efectivo esperado = fondo inicial + ventas en efectivo − retiros; diferencia contra lo contado; desglose de transferencias confirmadas y pendientes. También sin conexión. |
+| Dashboard | Ventas por día y por hora, Top 10 más vendidos, alertas de inventario y lista de compras con un clic. |
+| Catálogo web | Página pública `/catalogo` (nombre, foto, precio y disponibilidad). |
+| Notificaciones push | Avisos de producto agotado/bajo, transferencias por confirmar y cortes con diferencia. Se activan desde el dashboard. |
+| Fotos | Imágenes de producto en Cloudinary (subida firmada, entrega optimizada, caché offline). |
+| Offline-first | Todo se guarda primero en IndexedDB (Dexie) y se sincroniza al reconectar. |
+| Sincronización | **Background Sync API** (`worker/index.ts`) + respaldo con evento `online` y botón "Sincronizar ahora". Ventas idempotentes con `client_sale_id`. |
 
 ## Arquitectura
 
 - Next.js (App Router) + `@ducanh2912/next-pwa` (Service Worker, Workbox, manifest).
-- API REST con *route handlers* de Next.js (`app/api/**`) y PostgreSQL en Supabase.
-- IndexedDB con la librería `idb`: `lib/catalog-cache.ts`, `lib/local-sales.ts`, `lib/offline-queue.ts`, `lib/offline-ops.ts`.
-- Conflictos: **Last Write Wins**. Si un producto se editó en otro dispositivo mientras este estaba sin conexión, se aplica el cambio local y se muestra un aviso con los campos sobrescritos (`lib/offline-ops.ts`). Los ajustes de inventario se envían como diferencia (+/−), así no pisan ventas hechas mientras tanto. Las ventas son idempotentes por `client_sale_id`.
+- API REST con *route handlers* de Next.js y PostgreSQL en Supabase.
+- IndexedDB con **Dexie.js**: `lib/db.ts` (tablas `products`, `categories`, `local_sales`, `pending_sales`, `pending_ops`). Importa una sola vez los datos de la versión anterior.
+- Notificaciones con Web Push (`web-push`, llaves VAPID).
+- Conflictos: última escritura gana, con aviso al usuario; las ventas son idempotentes.
 
-## Variables de entorno
+## Configuración
 
-```
-NEXT_PUBLIC_SUPABASE_URL=https://tu-proyecto.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=tu-anon-key
-SUPABASE_SERVICE_ROLE_KEY=tu-service-role-key
-```
+1. Copia `.env.example` a `.env.local` y llena los valores.
+2. Llaves de notificaciones: `npx web-push generate-vapid-keys` (pública en `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, privada en `VAPID_PRIVATE_KEY`).
+3. Cloudinary: cuenta gratuita en cloudinary.com; copia `cloud name`, `API key` y `API secret`.
+4. En Supabase ejecuta, en orden: `supabase/schema.sql`, `puntobase-migration.sql`, `puntobase-migration-2.sql`, `puntobase-migration-3.sql` y `puntobase-migration-4.sql`.
 
-## Base de datos
-
-Ejecutar en Supabase, en este orden: `supabase/schema.sql`, `supabase/puntobase-migration.sql`,
-`supabase/puntobase-migration-2.sql`, `supabase/puntobase-migration-3.sql`.
-
-## Desarrollo
+## Desarrollo y pruebas
 
 ```bash
 npm install
-npm run dev      # el Service Worker se desactiva en desarrollo
-npm run build && npm start   # para probar la PWA y Background Sync
+npm run dev                  # el Service Worker se desactiva en desarrollo
+npm run build && npm start   # para probar la PWA, Background Sync y push
 ```
 
-Probar offline: Chrome → DevTools → Application → Service Workers → Offline. Probar Background
-Sync: marcar "Offline", vender, desmarcar y revisar "Sync" en la misma pestaña.
+- Offline: Chrome → DevTools → Application → Service Workers → Offline.
+- Background Sync: marca Offline, vende, desmarca y revisa la sección Sync.
+- Auditoría: DevTools → Lighthouse → categoría PWA.
+- Push requiere HTTPS (o `localhost`). En iPhone/iPad: instalar la app en la pantalla de inicio (iOS 16.4+).
 
 ## Limitantes del MVP
 
 - Solo efectivo y transferencia manual; sin tarjeta ni pasarelas de pago.
-- Altas y ediciones de producto sin conexión solo para productos sin variantes.
+- Edición offline de productos con variantes y subida de fotos requieren conexión.
 - Safari/iOS no soporta Background Sync: se usa el evento `online` y el botón de sincronizar.
-- Un solo negocio por instalación (sin `tenant_id` multi-negocio todavía).
-- El día de negocio es el de la Ciudad de México (UTC−6 fijo; México ya no usa horario de verano). Para otra zona, cambia `APP_TIMEZONE` y el desfase en `lib/utils.ts`.
+- Un solo negocio por instalación (sin `tenant_id` multi-negocio).
+- El backend usa route handlers de Next.js en lugar de Express.
 
-## Créditos y cambios del equipo
+## Cambios del equipo sobre la base
 
-Cambios sobre la base original: marca PuntoBase, eliminación del módulo de peces, escáner con cámara,
-semáforo, transferencia pendiente con "Confirmar pago", catálogo en caché, ventas locales, cola
-offline, Background Sync, estadísticas, catálogo público, desglose de transferencias en el corte, edición offline con Last Write Wins, instalación PWA, zona horaria y moneda de México. Guía de uso en `docs/GUIA-USUARIO.md`.
+Marca PuntoBase, eliminación del módulo de peces y del logo original, escáner con cámara y QR propios,
+semáforo, transferencia pendiente con bandeja, catálogo en caché, cola offline sobre Dexie, Background
+Sync, notificaciones push, estadísticas, catálogo público, fotos con Cloudinary y corte de caja con
+desglose de transferencias.

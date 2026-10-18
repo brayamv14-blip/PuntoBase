@@ -43,6 +43,7 @@ export interface Product {
   stock_qty: number | null;   // always null — stock lives on product_variants
   low_stock_threshold: number;
   barcode: string | null;
+  image_url: string | null;
   track_stock: boolean;
   is_active: boolean;
   created_at: string;

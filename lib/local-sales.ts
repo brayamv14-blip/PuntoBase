@@ -1,5 +1,5 @@
 
-import { openDB, type IDBPDatabase } from "idb";
+import { openDb } from "./db";
 import type {
   CreateSaleRequest,
   Customer,
@@ -15,48 +15,23 @@ export type LocalSale = Sale & {
   server_sale_id: string | null;
 };
 
-const DB_NAME = "puntobase-local-sales";
-const DB_VERSION = 1;
-const STORE = "sales";
-
-let dbPromise: Promise<IDBPDatabase> | null = null;
-
-function getDB() {
-  if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE, {
-            keyPath: "id",
-          });
-        }
-      },
-    }).catch((error) => {
-      dbPromise = null;
-      throw error;
-    });
-  }
-
-  return dbPromise;
-}
-
 export async function saveLocalSale(
   sale: LocalSale
 ): Promise<void> {
-  const db = await getDB();
-  await db.put(STORE, sale);
+  const db = await openDb();
+  await db.local_sales.put(sale);
 }
 
 export async function getLocalSale(
   id: string
 ): Promise<LocalSale | undefined> {
-  const db = await getDB();
-  return db.get(STORE, id);
+  const db = await openDb();
+  return db.local_sales.get(id);
 }
 
 export async function getAllLocalSales(): Promise<LocalSale[]> {
-  const db = await getDB();
-  return db.getAll(STORE);
+  const db = await openDb();
+  return db.local_sales.toArray();
 }
 
 export async function createLocalSaleSnapshot(

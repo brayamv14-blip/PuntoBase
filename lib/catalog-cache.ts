@@ -1,38 +1,21 @@
-
-import { openDB, type IDBPDatabase } from "idb";
+import { openDb, type Positioned } from "./db";
 import type { Category, ProductWithVariants } from "@/types";
 
-const DB_NAME = "puntobase-catalog-cache";
-const DB_VERSION = 1;
+const PRODUCTS_AT = "products_cached_at";
+const CATEGORIES_AT = "categories_cached_at";
 
-const PRODUCTS_STORE = "products";
-const CATEGORIES_STORE = "categories";
-const CACHE_KEY = "latest";
+function withPosition<T>(rows: T[]): Positioned<T>[] {
+  return rows.map((row, index) => ({ ...row, __pos: index }));
+}
 
-type CatalogDB = IDBPDatabase;
-
-let dbPromise: Promise<CatalogDB> | null = null;
-
-function getDB(): Promise<CatalogDB> {
-  if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains(PRODUCTS_STORE)) {
-          db.createObjectStore(PRODUCTS_STORE);
-        }
-
-        if (!db.objectStoreNames.contains(CATEGORIES_STORE)) {
-          db.createObjectStore(CATEGORIES_STORE);
-        }
-      },
-    }).catch((error) => {
-      // Permite volver a intentar abrir la base de datos si falla.
-      dbPromise = null;
-      throw error;
+function withoutPosition<T>(rows: Positioned<T>[]): T[] {
+  return rows
+    .sort((a, b) => a.__pos - b.__pos)
+    .map((row) => {
+      const { __pos: _ignored, ...rest } = row;
+      void _ignored;
+      return rest as unknown as T;
     });
-  }
-
-  return dbPromise;
 }
 
 export async function saveCachedProducts(
@@ -42,25 +25,20 @@ export async function saveCachedProducts(
     throw new Error("Los productos recibidos no son una lista válida.");
   }
 
-  const db = await getDB();
-  await db.put(PRODUCTS_STORE, products, CACHE_KEY);
+  const db = await openDb();
+  await db.transaction("rw", db.products, db.meta, async () => {
+    await db.products.clear();
+    await db.products.bulkPut(withPosition(products));
+    await db.meta.put({ key: PRODUCTS_AT, value: new Date().toISOString() });
+  });
 }
 
 export async function getCachedProducts(): Promise<
   ProductWithVariants[] | null
 > {
-  const db = await getDB();
-  const products: unknown = await db.get(PRODUCTS_STORE, CACHE_KEY);
-
-  if (products == null) {
-    return null;
-  }
-
-  if (!Array.isArray(products)) {
-    throw new Error("La caché local de productos no tiene un formato válido.");
-  }
-
-  return products as ProductWithVariants[];
+  const db = await openDb();
+  if (!(await db.meta.get(PRODUCTS_AT))) return null;
+  return withoutPosition<ProductWithVariants>(await db.products.toArray());
 }
 
 export async function saveCachedCategories(
@@ -70,25 +48,18 @@ export async function saveCachedCategories(
     throw new Error("Las categorías recibidas no son una lista válida.");
   }
 
-  const db = await getDB();
-  await db.put(CATEGORIES_STORE, categories, CACHE_KEY);
+  const db = await openDb();
+  await db.transaction("rw", db.categories, db.meta, async () => {
+    await db.categories.clear();
+    await db.categories.bulkPut(withPosition(categories));
+    await db.meta.put({ key: CATEGORIES_AT, value: new Date().toISOString() });
+  });
 }
 
 export async function getCachedCategories(): Promise<Category[] | null> {
-  const db = await getDB();
-  const categories: unknown = await db.get(CATEGORIES_STORE, CACHE_KEY);
-
-  if (categories == null) {
-    return null;
-  }
-
-  if (!Array.isArray(categories)) {
-    throw new Error(
-      "La caché local de categorías no tiene un formato válido."
-    );
-  }
-
-  return categories as Category[];
+  const db = await openDb();
+  if (!(await db.meta.get(CATEGORIES_AT))) return null;
+  return withoutPosition<Category>(await db.categories.toArray());
 }
 
 /**

@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScannerButton } from "@/components/scanner/Scanner";
+import { cloudinaryImage } from "@/lib/image-url";
 import { getStockStatus, STOCK_STATUS_STYLE } from "@/lib/stock-status";
 import {
   Dialog,
@@ -477,6 +478,15 @@ export default function ProductsPage() {
                 className="bg-card border rounded-xl p-3"
               >
                 <div className="flex items-center gap-2">
+                  {p.image_url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={cloudinaryImage(p.image_url, 96)}
+                      alt={p.name}
+                      loading="lazy"
+                      className="h-12 w-12 rounded-lg object-cover flex-shrink-0"
+                    />
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate">
                       {p.name}

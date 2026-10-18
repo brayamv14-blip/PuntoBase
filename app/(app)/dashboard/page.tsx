@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type { CashRegister, Sale, VariantWithProduct } from "@/types";
 import { SalesStats } from "@/components/dashboard/SalesStats";
+import { PushToggle } from "@/components/push/PushToggle";
 import {
   CatalogLinkButton,
   ShoppingListButton,
@@ -364,6 +365,8 @@ export default async function DashboardPage() {
       <SalesStats />
 
       <CatalogLinkButton />
+
+      <PushToggle />
     </div>
   );
 }

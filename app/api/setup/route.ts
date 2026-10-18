@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       .eq("id", 1)
       .single();
 
-    let isFirstSetup = !config?.setup_complete;
+    const isFirstSetup = !config?.setup_complete;
 
     if (isFirstSetup) {
       // First-time setup: create store config with provided access code

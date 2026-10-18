@@ -1,4 +1,4 @@
-import { openDB, type IDBPDatabase } from "idb";
+import { openDb, type PuntoBaseDB } from "./db";
 import { apiFetch } from "./api";
 import { requestBackgroundSync } from "./background-sync";
 
@@ -51,37 +51,11 @@ export interface FailedOp {
   message: string;
 }
 
-const DB_NAME = "puntobase-offline-ops";
-const DB_VERSION = 2;
-const STORE = "ops";
-const NOTICES = "notices";
-
-let dbPromise: Promise<IDBPDatabase> | null = null;
-
-function getDB(): Promise<IDBPDatabase> {
-  if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE, { keyPath: "id" });
-        }
-        if (!db.objectStoreNames.contains(NOTICES)) {
-          db.createObjectStore(NOTICES, { keyPath: "id" });
-        }
-      },
-    }).catch((error) => {
-      dbPromise = null;
-      throw error;
-    });
-  }
-  return dbPromise;
-}
-
 export async function enqueueOp(
   type: OfflineOpType,
   payload: Record<string, unknown>
 ): Promise<string> {
-  const db = await getDB();
+  const db = await openDb();
   const id = `OP-${crypto.randomUUID()}`;
   const op: OfflineOp = {
     id,
@@ -90,20 +64,20 @@ export async function enqueueOp(
     payload: type === "create_product" ? { ...payload, client_id: id } : payload,
     createdAt: new Date().toISOString(),
   };
-  await db.put(STORE, op);
+  await db.pending_ops.put(op);
   void requestBackgroundSync();
   return op.id;
 }
 
 export async function getPendingOps(): Promise<OfflineOp[]> {
-  const db = await getDB();
-  const ops = (await db.getAll(STORE)) as OfflineOp[];
+  const db = await openDb();
+  const ops = (await db.pending_ops.toArray()) as OfflineOp[];
   return ops.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function countPendingOps(): Promise<number> {
-  const db = await getDB();
-  return db.count(STORE);
+  const db = await openDb();
+  return db.pending_ops.count();
 }
 
 /** Operaciones que el servidor rechazo (se quedan en cola hasta reintentar o descartar). */
@@ -115,19 +89,19 @@ export async function getFailedOps(): Promise<FailedOp[]> {
 }
 
 export async function discardOp(id: string): Promise<void> {
-  const db = await getDB();
-  await db.delete(STORE, id);
+  const db = await openDb();
+  await db.pending_ops.delete(id);
 }
 
 /** Quita el error guardado para que la operacion se reintente limpia. */
 export async function clearOpErrors(): Promise<void> {
-  const db = await getDB();
-  const ops = (await db.getAll(STORE)) as OfflineOp[];
+  const db = await openDb();
+  const ops = (await db.pending_ops.toArray()) as OfflineOp[];
   for (const op of ops) {
     if (op.lastError) {
       const { lastError: _ignored, ...rest } = op;
       void _ignored;
-      await db.put(STORE, rest);
+      await db.pending_ops.put(rest);
     }
   }
 }
@@ -135,8 +109,8 @@ export async function clearOpErrors(): Promise<void> {
 // ─── Avisos (por ejemplo, "se sobrescribio un cambio de otro dispositivo") ────
 
 async function addNotice(message: string): Promise<void> {
-  const db = await getDB();
-  await db.put(NOTICES, {
+  const db = await openDb();
+  await db.notices.put({
     id: `N-${crypto.randomUUID()}`,
     message,
     createdAt: new Date().toISOString(),
@@ -145,14 +119,14 @@ async function addNotice(message: string): Promise<void> {
 
 /** Devuelve y borra los avisos pendientes de mostrar al usuario. */
 export async function takeNotices(): Promise<string[]> {
-  const db = await getDB();
-  const all = (await db.getAll(NOTICES)) as {
+  const db = await openDb();
+  const all = (await db.notices.toArray()) as {
     id: string;
     message: string;
     createdAt: string;
   }[];
   all.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  for (const n of all) await db.delete(NOTICES, n.id);
+  for (const n of all) await db.notices.delete(n.id);
   return all.map((n) => n.message);
 }
 
@@ -206,14 +180,14 @@ function detectConflicts(server: ServerProduct, payload: UpdateProductPayload): 
 
 /** Ejecuta update_product por pasos; cada paso terminado se guarda para no repetirlo si falla uno posterior. */
 async function runUpdateProduct(
-  db: IDBPDatabase,
+  db: PuntoBaseDB,
   op: OfflineOp
 ): Promise<{ discarded?: boolean }> {
   const payload = op.payload as unknown as UpdateProductPayload;
   const done = new Set(op.done ?? []);
   const mark = async (step: string) => {
     done.add(step);
-    await db.put(STORE, { ...op, done: [...done], lastError: undefined });
+    await db.pending_ops.put({ ...op, done: [...done], lastError: undefined });
   };
 
   if (!done.has("check")) {
@@ -287,7 +261,7 @@ export async function flushOps(
   onSuccess?: (op: OfflineOp) => void,
   onError?: (op: OfflineOp, message: string) => void
 ): Promise<void> {
-  const db = await getDB();
+  const db = await openDb();
   const ops = (await getPendingOps()).filter((op) => types.includes(op.type));
 
   for (const op of ops) {
@@ -299,7 +273,7 @@ export async function flushOps(
       } else {
         await runSimpleOp(op);
       }
-      await db.delete(STORE, op.id);
+      await db.pending_ops.delete(op.id);
       onSuccess?.(op);
     } catch (error) {
       const raw = error instanceof Error ? error.message : "";
@@ -309,8 +283,8 @@ export async function flushOps(
         continue;
       }
       const message = raw || "No se pudo sincronizar la operación.";
-      const current = ((await db.get(STORE, op.id)) as OfflineOp | undefined) ?? op;
-      await db.put(STORE, { ...current, lastError: message });
+      const current = ((await db.pending_ops.get(op.id)) as OfflineOp | undefined) ?? op;
+      await db.pending_ops.put({ ...current, lastError: message });
       onError?.(op, message);
     }
   }

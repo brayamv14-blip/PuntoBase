@@ -21,6 +21,16 @@ const withPWA = withPWAInit({
     disableDevLogs: true,
     runtimeCaching: [
       {
+        // Fotos de productos (Cloudinary): visibles sin conexion tras la primera carga.
+        urlPattern: /^https:\/\/res\.cloudinary\.com\/.*/i,
+        handler: "CacheFirst",
+        options: {
+          cacheName: "product-images",
+          expiration: { maxEntries: 150, maxAgeSeconds: 60 * 60 * 24 * 30 },
+          cacheableResponse: { statuses: [0, 200] },
+        },
+      },
+      {
         urlPattern:
           /\/api\/(products|categories|customers)(?:\/|$|\?)/,
         handler: "StaleWhileRevalidate",

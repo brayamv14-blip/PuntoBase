@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase/server";
 import { getStockStatus, STOCK_STATUS_STYLE, type StockStatus } from "@/lib/stock-status";
 import { formatCurrency } from "@/lib/utils";
+import { cloudinaryImage } from "@/lib/image-url";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Catálogo | PuntoBase" };
@@ -14,6 +15,7 @@ type ProductRow = {
   id: string;
   name: string;
   track_stock: boolean;
+  image_url: string | null;
   category: { name: string } | null;
   variants: VariantRow[];
 };
@@ -43,7 +45,7 @@ export default async function CatalogoPage({
     supabase.from("store_config").select("store_name").limit(1).maybeSingle(),
     supabase
       .from("products")
-      .select("id, name, track_stock, category:categories(name), variants:product_variants(price, stock_qty, low_stock_threshold)")
+      .select("id, name, track_stock, image_url, category:categories(name), variants:product_variants(price, stock_qty, low_stock_threshold)")
       .eq("is_active", true)
       .order("name")
       .limit(500),
@@ -86,6 +88,15 @@ export default async function CatalogoPage({
 
           return (
             <li key={p.id} className="rounded-xl border bg-card p-3 space-y-1">
+              {p.image_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={cloudinaryImage(p.image_url, 480)}
+                  alt={p.name}
+                  loading="lazy"
+                  className="w-full h-40 rounded-lg object-cover mb-1"
+                />
+              )}
               <p className="font-medium">{p.name}</p>
               {p.category?.name && <p className="text-xs text-muted-foreground">{p.category.name}</p>}
               <p className="text-sm font-semibold">

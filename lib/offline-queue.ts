@@ -1,5 +1,5 @@
 
-import { openDB, type IDBPDatabase } from "idb";
+import { openDb } from "./db";
 import { apiFetch } from "./api";
 import { requestBackgroundSync, withFlushLock } from "./background-sync";
 import { flushOps } from "./offline-ops";
@@ -9,43 +9,19 @@ import {
 } from "./local-sales";
 import type { CreateSaleRequest } from "@/types";
 
-const DB_NAME = "pos-offline";
-const DB_VERSION = 1;
-const STORE = "pending_sales";
-
 export interface PendingSale {
   localId: string;
   payload: CreateSaleRequest;
   createdAt: string;
 }
 
-let dbPromise: Promise<IDBPDatabase> | null = null;
 let isFlushing = false;
-
-async function getDB(): Promise<IDBPDatabase> {
-  if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE, {
-            keyPath: "localId",
-          });
-        }
-      },
-    }).catch((error) => {
-      dbPromise = null;
-      throw error;
-    });
-  }
-
-  return dbPromise;
-}
 
 export async function enqueueSale(
   payload: CreateSaleRequest,
   existingLocalId?: string
 ): Promise<string> {
-  const db = await getDB();
+  const db = await openDb();
 
   const localId =
     existingLocalId ?? `LOCAL-${crypto.randomUUID()}`;
@@ -56,7 +32,7 @@ export async function enqueueSale(
     createdAt: new Date().toISOString(),
   };
 
-  await db.put(STORE, entry);
+  await db.pending_sales.put(entry);
 
   // Background Sync: el Service Worker sincroniza al volver la red.
   void requestBackgroundSync();
@@ -65,15 +41,15 @@ export async function enqueueSale(
 }
 
 export async function getPendingSales(): Promise<PendingSale[]> {
-  const db = await getDB();
-  return db.getAll(STORE);
+  const db = await openDb();
+  return db.pending_sales.toArray();
 }
 
 export async function deletePendingSale(
   localId: string
 ): Promise<void> {
-  const db = await getDB();
-  await db.delete(STORE, localId);
+  const db = await openDb();
+  await db.pending_sales.delete(localId);
 }
 
 /**
