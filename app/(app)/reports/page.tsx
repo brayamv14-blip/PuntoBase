@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   Tabs,
   TabsList,
@@ -75,9 +76,10 @@ interface AdjustmentRow {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function ReportsPage() {
+  const router = useRouter();
   const today = todayDateString();
-  const [date, setDate] = useState(today);
 
+  const [date, setDate] = useState(today);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [adjustments, setAdjustments] = useState<AdjustmentRow[]>([]);
@@ -100,40 +102,68 @@ export default function ReportsPage() {
     try {
       const [salesRes, expRes, adjRes] = await Promise.all([
         apiFetch(
-          `/api/sales?from=${fromISO}&to=${toISO}&limit=200`
-        ).then((r) => r.json()),
+          `/api/sales?from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}&limit=200`
+        ).then(async (r) => {
+          const result = await r.json();
+          if (!r.ok) {
+            throw new Error(result.error ?? "No se pudieron cargar las ventas.");
+          }
+          return result;
+        }),
         apiFetch(
-          `/api/reports/expenses?from=${date}&to=${date}`
-        ).then((r) => r.json()),
+          `/api/reports/expenses?from=${encodeURIComponent(date)}&to=${encodeURIComponent(date)}`
+        ).then(async (r) => {
+          const result = await r.json();
+          if (!r.ok) {
+            throw new Error(result.error ?? "No se pudieron cargar los gastos.");
+          }
+          return result;
+        }),
         apiFetch(
-          `/api/stock/adjustments?from=${date}&to=${date}`
-        ).then((r) => r.json()),
+          `/api/stock/adjustments?from=${encodeURIComponent(date)}&to=${encodeURIComponent(date)}`
+        ).then(async (r) => {
+          const result = await r.json();
+          if (!r.ok) {
+            throw new Error(result.error ?? "No se pudieron cargar los ajustes.");
+          }
+          return result;
+        }),
       ]);
 
       setSales(salesRes.data ?? []);
       setExpenses(expRes.items ?? []);
       setAdjustments(Array.isArray(adjRes) ? adjRes : []);
+    } catch (error) {
+      console.error("Error al cargar los reportes:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron cargar los reportes."
+      );
     } finally {
       setLoading(false);
     }
   }, [date]);
 
   useEffect(() => {
-    loadAll();
+    void loadAll();
   }, [loadAll]);
 
   function shiftDate(days: number) {
-    const d = new Date(date);
+    const d = new Date(`${date}T12:00:00`);
     d.setDate(d.getDate() + days);
-    setDate(d.toISOString().split("T")[0]);
+    setDate(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+    );
   }
 
   const filteredSales = sales.filter((s) => {
+    const search = salesSearch.toLowerCase();
+
     const nameMatch =
-      !salesSearch ||
-      (s.customer?.name ?? "")
-        .toLowerCase()
-        .includes(salesSearch.toLowerCase());
+      !search ||
+      (s.customer?.name ?? "").toLowerCase().includes(search) ||
+      (s.sale_number ?? "").toLowerCase().includes(search);
 
     const payMatch =
       paymentFilter === "all" || s.payment_method === paymentFilter;
@@ -158,9 +188,7 @@ export default function ReportsPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-80px)] max-w-lg mx-auto w-full">
       <div className="px-4 pt-4 pb-2">
-        <h1 className="font-bold text-2xl tracking-tight">
-          Reportes
-        </h1>
+        <h1 className="font-bold text-2xl tracking-tight">Reportes</h1>
       </div>
 
       <Tabs defaultValue="sales" className="flex flex-col flex-1 min-h-0">
@@ -178,7 +206,6 @@ export default function ReportsPage() {
           </TabsList>
         </div>
 
-        {/* Selector de fecha */}
         <div className="px-4 pt-3 pb-2 flex items-center gap-2">
           <Button
             size="icon"
@@ -214,7 +241,7 @@ export default function ReportsPage() {
         >
           <div className="flex gap-2">
             <Input
-              placeholder="Buscar cliente..."
+              placeholder="Buscar cliente o folio..."
               value={salesSearch}
               onChange={(e) => setSalesSearch(e.target.value)}
               className="flex-1"
@@ -229,7 +256,6 @@ export default function ReportsPage() {
               <SelectTrigger className="w-32">
                 <SelectValue placeholder="Pago" />
               </SelectTrigger>
-
               <SelectContent>
                 <SelectItem value="all">Todos</SelectItem>
                 <SelectItem value="cash">Efectivo</SelectItem>
@@ -257,6 +283,11 @@ export default function ReportsPage() {
                 )
               }
               onRefunded={loadAll}
+              onViewReceipt={() =>
+                router.push(
+                  `/pos/receipt/${encodeURIComponent(sale.id)}`
+                )
+              }
             />
           ))}
         </TabsContent>
@@ -281,15 +312,11 @@ export default function ReportsPage() {
           )}
 
           {filteredExpenses.map((exp) => (
-            <div
-              key={exp.id}
-              className="bg-card border rounded-xl p-3"
-            >
+            <div key={exp.id} className="bg-card border rounded-xl p-3">
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-medium flex-1">
                   {exp.description}
                 </p>
-
                 <p className="font-bold text-red-600 flex-shrink-0">
                   {formatCurrency(Number(exp.amount))}
                 </p>
@@ -325,10 +352,7 @@ export default function ReportsPage() {
           )}
 
           {filteredAdjustments.map((adj) => (
-            <div
-              key={adj.id}
-              className="bg-card border rounded-xl p-3"
-            >
+            <div key={adj.id} className="bg-card border rounded-xl p-3">
               <div className="flex items-center gap-3">
                 <span
                   className={cn(
@@ -346,7 +370,6 @@ export default function ReportsPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">
                     {adj.product?.name ?? "—"}
-
                     {adj.variant?.size_label && (
                       <span className="text-muted-foreground font-normal">
                         {" "}({adj.variant.size_label})
@@ -380,32 +403,39 @@ function SaleCard({
   expanded,
   onToggle,
   onRefunded,
+  onViewReceipt,
 }: {
   sale: SaleRow;
   expanded: boolean;
   onToggle: () => void;
   onRefunded: () => void;
+  onViewReceipt: () => void;
 }) {
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [refunding, setRefunding] = useState(false);
 
-  const subtotal = sale.items.reduce((s, i) => s + i.line_total, 0);
+  const items = sale.items ?? [];
+  const subtotal = items.reduce(
+    (sum, item) => sum + Number(item.line_total || 0),
+    0
+  );
 
   const discountAmount =
     sale.discount_type === "percent"
       ? (subtotal * (sale.discount_value ?? 0)) / 100
       : (sale.discount_value ?? 0);
 
-  const hasAnyRefund = sale.items.some((i) => i.refunded_qty > 0);
+  const hasAnyRefund = items.some((i) => i.refunded_qty > 0);
 
-  const refundableItems = sale.items.filter(
+  const refundableItems = items.filter(
     (i) => i.refunded_qty < i.qty
   );
 
-  const checkedItems = sale.items.filter((i) => checkedIds.has(i.id));
+  const checkedItems = items.filter((i) => checkedIds.has(i.id));
 
   const refundTotal = checkedItems.reduce(
-    (s, i) => s + i.unit_price * (i.qty - i.refunded_qty),
+    (sum, item) =>
+      sum + Number(item.unit_price) * (item.qty - item.refunded_qty),
     0
   );
 
@@ -433,26 +463,31 @@ function SaleCard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: checkedItems.map((i) => ({
-            sale_item_id: i.id,
-            qty: i.qty - i.refunded_qty,
+          items: checkedItems.map((item) => ({
+            sale_item_id: item.id,
+            qty: item.qty - item.refunded_qty,
           })),
         }),
       });
 
-      const data = await res.json();
+      const result = await res.json();
 
       if (!res.ok) {
-        toast.error(data.error ?? "No se pudo realizar la devolución.");
+        toast.error(
+          result.error ?? "No se pudo realizar la devolución."
+        );
         return;
       }
 
       toast.success(
-        `Devolución realizada: ${formatCurrency(data.refunded_total)}`
+        `Devolución realizada: ${formatCurrency(result.refunded_total)}`
       );
 
       setCheckedIds(new Set());
       onRefunded();
+    } catch (error) {
+      console.error("Error al realizar devolución:", error);
+      toast.error("Ocurrió un error al realizar la devolución.");
     } finally {
       setRefunding(false);
     }
@@ -461,6 +496,7 @@ function SaleCard({
   return (
     <div className="bg-card border rounded-xl overflow-hidden">
       <button
+        type="button"
         onClick={onToggle}
         className="w-full p-3 flex items-center gap-2 text-left cursor-pointer hover:bg-muted/50 transition-colors"
       >
@@ -512,7 +548,7 @@ function SaleCard({
 
       {expanded && (
         <div className="border-t px-3 pb-3 pt-2 space-y-1.5 bg-muted/30">
-          {sale.items.map((item) => {
+          {items.map((item) => {
             const fullyRefunded = item.refunded_qty >= item.qty;
             const checked = checkedIds.has(item.id);
 
@@ -554,7 +590,7 @@ function SaleCard({
                   </span>
                 ) : (
                   <span className="font-medium flex-shrink-0">
-                    {formatCurrency(item.line_total)}
+                    {formatCurrency(Number(item.line_total))}
                   </span>
                 )}
               </div>
@@ -572,6 +608,16 @@ function SaleCard({
             <span>Total</span>
             <span>{formatCurrency(Number(sale.total))}</span>
           </div>
+
+          {/* Botón para abrir el comprobante de esta venta */}
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full mt-2"
+            onClick={onViewReceipt}
+          >
+            Ver comprobante
+          </Button>
 
           {refundableItems.length > 0 && checkedIds.size > 0 && (
             <Button
