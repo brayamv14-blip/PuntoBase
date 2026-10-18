@@ -2,18 +2,30 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { flushQueue, getPendingSales } from "@/lib/offline-queue";
-import { countPendingOps } from "@/lib/offline-ops";
+import {
+  clearOpErrors,
+  countPendingOps,
+  discardOp,
+  getFailedOps,
+  takeNotices,
+  type FailedOp,
+} from "@/lib/offline-ops";
 import { SYNC_DONE_MESSAGE } from "@/lib/background-sync";
 
 export function OfflineBanner() {
   const [offline, setOffline] = useState(false);
   const [pending, setPending] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  const [failed, setFailed] = useState<FailedOp[]>([]);
 
   const refreshPending = useCallback(async () => {
     try {
       const [sales, ops] = await Promise.all([getPendingSales(), countPendingOps()]);
       setPending(sales.length + ops);
+      setFailed(await getFailedOps());
+
+      // Avisos de "ultima escritura gana" dejados por la sincronizacion.
+      for (const message of await takeNotices()) toast.warning(message, { duration: 12000 });
     } catch {
       // IndexedDB no disponible: no se muestra el contador
     }
@@ -70,6 +82,34 @@ export function OfflineBanner() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function retryFailed() {
+    await clearOpErrors();
+    await syncNow();
+  }
+
+  async function discardFirstFailed() {
+    if (!failed[0]) return;
+    if (!confirm("¿Descartar esta operación? El cambio hecho sin conexión se perderá.")) return;
+    await discardOp(failed[0].id);
+    void refreshPending();
+  }
+
+  if (!offline && failed.length > 0) {
+    return (
+      <div className="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white text-center text-xs font-semibold py-1 px-2 flex flex-wrap items-center justify-center gap-x-2">
+        <span>
+          {failed.length} operación{failed.length === 1 ? "" : "es"} no se pudo sincronizar: {failed[0].message}
+        </span>
+        <button type="button" onClick={() => void retryFailed()} className="underline underline-offset-2">
+          Reintentar
+        </button>
+        <button type="button" onClick={() => void discardFirstFailed()} className="underline underline-offset-2">
+          Descartar
+        </button>
+      </div>
+    );
+  }
 
   if (offline) {
     return (

@@ -1,24 +1,26 @@
 {
+  "id": "/",
   "name": "PuntoBase",
   "short_name": "PuntoBase",
-  "description": "Inventario con QR, ventas y corte de caja para pequeños negocios",
+  "description": "Inventario con QR, ventas y corte de caja para pequeños negocios, incluso sin internet",
+  "lang": "es-MX",
+  "dir": "ltr",
   "start_url": "/pos",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "theme_color": "#E4572E",
   "background_color": "#EFE6DD",
+  "categories": ["business", "productivity", "shopping"],
   "icons": [
-    {
-      "src": "/icons/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Nueva venta", "short_name": "Vender", "url": "/pos", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Inventario", "short_name": "Inventario", "url": "/products", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Cierre de caja", "short_name": "Caja", "url": "/eod", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
   ]
 }

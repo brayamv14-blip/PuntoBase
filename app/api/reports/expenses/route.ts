@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
+import { dayEndISO, dayStartISO, todayDateString } from "@/lib/utils";
 
 export async function GET(req: NextRequest) {
   try {
     const device = await getDeviceFromCookies();
 
     const { searchParams } = new URL(req.url);
-    const from = searchParams.get("from") ?? new Date().toISOString().split("T")[0];
+    const from = searchParams.get("from") ?? todayDateString();
     const to = searchParams.get("to") ?? from;
 
     const { data, error } = await supabase
       .from("expenses")
       .select("*, device:devices(id,name)")
-      .gte("created_at", `${from}T00:00:00.000Z`)
-      .lte("created_at", `${to}T23:59:59.999Z`)
+      .gte("created_at", dayStartISO(from))
+      .lte("created_at", dayEndISO(to))
       .order("created_at", { ascending: false });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

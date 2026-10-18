@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase/server";
+import { addDays, dayEndISO, dayStartISO, todayDateString } from "@/lib/utils";
 
 /**
  * Returns the best available opening balance for today's register.
@@ -8,9 +9,7 @@ import { supabase } from "@/lib/supabase/server";
  *   3. 0 (no prior register at all)
  */
 export async function getYesterdayOpeningBalance(): Promise<number> {
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yDate = yesterday.toISOString().split("T")[0];
+  const yDate = addDays(todayDateString(), -1);
 
   const { data: prev } = await supabase
     .from("cash_register")
@@ -24,8 +23,8 @@ export async function getYesterdayOpeningBalance(): Promise<number> {
   if (prev.actual_cash != null) return Number(prev.actual_cash);
 
   // EOD was skipped — calculate expected cash for yesterday
-  const yStart = `${yDate}T00:00:00.000Z`;
-  const yEnd = `${yDate}T23:59:59.999Z`;
+  const yStart = dayStartISO(yDate);
+  const yEnd = dayEndISO(yDate);
 
   const [{ data: salesData }, { data: expensesData }] = await Promise.all([
     supabase.from("sales").select("total").eq("payment_method", "cash").gte("created_at", yStart).lte("created_at", yEnd),
@@ -41,7 +40,7 @@ export async function getYesterdayOpeningBalance(): Promise<number> {
 /**
  * Ensures a cash register row exists for the current business day.
  * If the latest register is already closed, reopens it so EOD must be resubmitted.
- * Uses the latest unclosed register to avoid UTC-date boundary issues.
+ * Dates are Mexico City calendar days (see lib/utils.ts).
  */
 export async function ensureOpenCashRegister(): Promise<void> {
   const { data: latest } = await supabase
@@ -52,7 +51,7 @@ export async function ensureOpenCashRegister(): Promise<void> {
     .single();
 
   if (!latest) {
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayDateString();
     const openingBalance = await getYesterdayOpeningBalance();
     await supabase.from("cash_register").insert({ date: today, opening_balance: openingBalance });
     return;

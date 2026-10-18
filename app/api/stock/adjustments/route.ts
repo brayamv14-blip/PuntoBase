@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
+import { dayEndISO, dayStartISO } from "@/lib/utils";
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,8 +18,8 @@ export async function GET(req: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(200);
 
-    if (from) query = query.gte("created_at", `${from}T00:00:00.000Z`);
-    if (to)   query = query.lte("created_at", `${to}T23:59:59.999Z`);
+    if (from) query = query.gte("created_at", dayStartISO(from));
+    if (to)   query = query.lte("created_at", dayEndISO(to));
 
     const { data, error } = await query;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

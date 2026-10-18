@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { enqueueOp } from "@/lib/offline-ops";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, todayDateString } from "@/lib/utils";
 
 interface RegisterData {
   date: string;
@@ -69,7 +69,7 @@ export default function EodPage() {
         await enqueueOp("close_cash_register", {
           actual_cash: Number(actualCash),
           notes: notes.trim() || null,
-          date: new Date().toISOString().split("T")[0],
+          date: todayDateString(),
         });
         toast.success("Corte guardado en el dispositivo. La caja se cerrará al reconectar.");
         setActualCash("");

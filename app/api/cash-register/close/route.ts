@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
 import { getYesterdayOpeningBalance } from "@/lib/cash-register";
+import { dayEndISO, dayStartISO, isDateOnly, todayDateString } from "@/lib/utils";
 
 export async function POST(req: NextRequest) {
   const device = await getDeviceFromCookies();
@@ -11,11 +12,8 @@ export async function POST(req: NextRequest) {
   if (actual_cash == null) return NextResponse.json({ error: "actual_cash required" }, { status: 400 });
 
   // Un corte hecho sin conexion llega despues: usa la fecha en que se capturo.
-  const utcToday = new Date().toISOString().split("T")[0];
-  const today =
-    typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= utcToday
-      ? date
-      : utcToday;
+  const mxToday = todayDateString();
+  const today = isDateOnly(date) && date <= mxToday ? date : mxToday;
 
   // Find today's register (open or closed)
   let { data: register } = await supabase
@@ -35,8 +33,8 @@ export async function POST(req: NextRequest) {
   }
 
   const dateStr = register!.date as string;
-  const dateStart = `${dateStr}T00:00:00.000Z`;
-  const dateEnd = `${dateStr}T23:59:59.999Z`;
+  const dateStart = dayStartISO(dateStr);
+  const dateEnd = dayEndISO(dateStr);
 
   const [{ data: salesData }, { data: expensesData }] = await Promise.all([
     supabase.from("sales").select("total").eq("payment_method", "cash").gte("created_at", dateStart).lte("created_at", dateEnd),

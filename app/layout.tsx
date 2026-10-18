@@ -8,7 +8,16 @@ const geist = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
 export const metadata: Metadata = {
   title: "PuntoBase",
   description: "Plataforma PWA para la gestión de pequeños negocios",
+  applicationName: "PuntoBase",
   manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icons/apple-touch-icon.png",
+  },
+  formatDetection: { telephone: false },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -19,17 +28,13 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  themeColor: "#18181b",
+  viewportFit: "cover",
+  themeColor: "#E4572E",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es" className={`${geist.variable} h-full`}>
-      <head>
-        <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-      </head>
       <body className="h-full font-sans antialiased bg-background text-foreground">
         {children}
         <Toaster position="top-center" richColors />

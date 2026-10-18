@@ -9,7 +9,8 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { ScannerButton } from "@/components/scanner/Scanner";
-import { enqueueOp } from "@/lib/offline-ops";
+import { enqueueOp, type UpdateProductPayload } from "@/lib/offline-ops";
+import { patchCachedProduct } from "@/lib/catalog-cache";
 import type { Product, ProductVariant, Category } from "@/types";
 
 interface ProductFormProps {
@@ -124,6 +125,82 @@ export function ProductForm({ product }: ProductFormProps) {
           low_stock_threshold: threshold,
         });
         toast.success("Producto guardado en el dispositivo. Se creará al reconectar.");
+        router.push("/products");
+        return;
+      }
+
+      // Edicion sin conexion: se guarda en el dispositivo y se envia al reconectar
+      // (si otro dispositivo cambio el producto, gana la ultima escritura y se avisa).
+      if (isEdit && !navigator.onLine) {
+        if (hasVariants || (product!.variants ?? []).some((v) => (v.size_label ?? "") !== "")) {
+          toast.error("Los productos con variantes necesitan conexión a internet para editarse.");
+          return;
+        }
+
+        const original = product!;
+        const originalVariant = (original.variants ?? []).find((v) => (v.size_label ?? "") === "");
+        const newPrice = blankVariant ? Number(blankVariant.price ?? 0) : null;
+        const newStock = blankVariant ? (trackStock ? Number(blankVariant.stock_qty ?? 0) : 0) : null;
+        const qtyChange =
+          blankVariant?.id && originalVariant
+            ? Number(blankVariant.stock_qty ?? 0) - Number(originalVariant.stock_qty ?? 0)
+            : 0;
+
+        const payload: UpdateProductPayload = {
+          product_id: original.id,
+          product_name: name.trim(),
+          base: {
+            name: original.name,
+            category_id: original.category_id ?? null,
+            barcode: original.barcode ?? null,
+            price: originalVariant ? Number(originalVariant.price) : null,
+            low_stock_threshold: Number(original.low_stock_threshold),
+          },
+          product: {
+            name: name.trim(),
+            category_id: categoryId,
+            barcode,
+            track_stock: trackStock,
+            price: newPrice,
+            stock_qty: newStock,
+            low_stock_threshold: threshold,
+          },
+          variant: blankVariant?.id
+            ? { id: blankVariant.id, price: Number(blankVariant.price ?? 0), low_stock_threshold: threshold }
+            : undefined,
+          stock:
+            blankVariant?.id && qtyChange !== 0
+              ? { variant_id: blankVariant.id, qty_change: qtyChange, note: adjustNote.trim() || null }
+              : undefined,
+        };
+
+        await enqueueOp("update_product", payload as unknown as Record<string, unknown>);
+
+        // Reflejar el cambio de inmediato en el catalogo local.
+        try {
+          await patchCachedProduct(original.id, (p) => ({
+            ...p,
+            name: name.trim(),
+            category_id: categoryId,
+            barcode: barcode || null,
+            track_stock: trackStock,
+            low_stock_threshold: threshold,
+            variants: (p.variants ?? []).map((v) =>
+              v.id === blankVariant?.id
+                ? {
+                    ...v,
+                    price: Number(blankVariant.price ?? 0),
+                    stock_qty: trackStock ? Number(blankVariant.stock_qty ?? 0) : 0,
+                    low_stock_threshold: threshold,
+                  }
+                : v
+            ),
+          }));
+        } catch {
+          // sin cache local: el cambio igual queda en la cola
+        }
+
+        toast.success("Cambios guardados en el dispositivo. Se aplicarán al reconectar.");
         router.push("/products");
         return;
       }

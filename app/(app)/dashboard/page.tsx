@@ -3,7 +3,13 @@ import { getDeviceFromCookies } from "@/lib/auth";
 import { supabase } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
+import {
+  dayEndISO,
+  dayStartISO,
+  formatCurrency,
+  formatDateTime,
+  todayDateString,
+} from "@/lib/utils";
 import {
   TrendingUp,
   Wallet,
@@ -28,9 +34,9 @@ export default async function DashboardPage() {
   const device = await getDeviceFromCookies();
   if (!device) redirect("/setup");
 
-  const today = new Date().toISOString().split("T")[0];
-  const todayStart = `${today}T00:00:00.000Z`;
-  const todayEnd = `${today}T23:59:59.999Z`;
+  const today = todayDateString();
+  const todayStart = dayStartISO(today);
+  const todayEnd = dayEndISO(today);
 
   const [cashRegRes, salesRes, expRes, recentRes, varRes] =
     await Promise.all([

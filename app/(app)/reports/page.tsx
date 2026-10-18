@@ -30,6 +30,8 @@ import {
   formatCurrency,
   formatDateTime,
   todayDateString,
+  dayStartISO,
+  dayEndISO,
   cn,
 } from "@/lib/utils";
 
@@ -96,8 +98,8 @@ export default function ReportsPage() {
   const loadAll = useCallback(async () => {
     setLoading(true);
 
-    const fromISO = `${date}T00:00:00.000Z`;
-    const toISO = `${date}T23:59:59.999Z`;
+    const fromISO = dayStartISO(date);
+    const toISO = dayEndISO(date);
 
     try {
       const [salesRes, expRes, adjRes] = await Promise.all([

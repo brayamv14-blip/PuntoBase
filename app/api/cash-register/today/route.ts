@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
 import { getYesterdayOpeningBalance } from "@/lib/cash-register";
+import { dayEndISO, dayStartISO, todayDateString } from "@/lib/utils";
 
 export async function GET() {
   try {
   const device = await getDeviceFromCookies();
   if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayDateString();
 
   // Try to find today's register first (open or closed)
   let { data: register, error: fetchError } = await supabase
@@ -38,8 +39,8 @@ export async function GET() {
   }
 
   const dateStr = register!.date as string;
-  const dateStart = `${dateStr}T00:00:00.000Z`;
-  const dateEnd = `${dateStr}T23:59:59.999Z`;
+  const dateStart = dayStartISO(dateStr);
+  const dateEnd = dayEndISO(dateStr);
 
   // Transferencias del dia: cobradas vs pendientes de confirmar.
   const { data: transferData } = await supabase

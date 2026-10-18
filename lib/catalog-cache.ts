@@ -90,3 +90,19 @@ export async function getCachedCategories(): Promise<Category[] | null> {
 
   return categories as Category[];
 }
+
+/**
+ * Aplica una edicion hecha sin conexion al catalogo guardado en el dispositivo,
+ * para que el POS y el inventario ya muestren el cambio antes de sincronizar.
+ */
+export async function patchCachedProduct(
+  productId: string,
+  patch: (product: ProductWithVariants) => ProductWithVariants
+): Promise<void> {
+  const products = await getCachedProducts();
+  if (!products) return;
+
+  await saveCachedProducts(
+    products.map((product) => (product.id === productId ? patch(product) : product))
+  );
+}

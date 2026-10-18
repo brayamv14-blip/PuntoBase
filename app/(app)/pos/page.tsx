@@ -221,13 +221,8 @@ useEffect(() => {
 
     try {
       if (!navigator.onLine) {
-        if (cart.payment_method !== "cash") {
-          toast.error(
-            "Las transferencias requieren conexión a internet."
-          );
-          return;
-        }
-
+        // Efectivo o transferencia: ambas se guardan en el dispositivo.
+        // Una transferencia queda como "Transferencia pendiente" hasta confirmarla.
         await saveOfflineSale(
           payload,
           clientSaleId,
@@ -259,15 +254,9 @@ useEffect(() => {
         cart.clear();
         router.push(`/pos/receipt/${data.id}`);
       } catch {
-        if (cart.payment_method !== "cash") {
-          toast.error(
-            "No se pudo confirmar el resultado de la transferencia. Verifica la venta antes de volver a cobrar."
-          );
-          return;
-        }
-
-        // Si falló la petición, conserva el mismo identificador
-        // para que el reintento no genere otra venta.
+        // Si falló la petición, conserva el mismo identificador (client_sale_id):
+        // el servidor ignora el duplicado, así que reintentar no genera otra venta,
+        // tampoco en transferencias.
         await saveOfflineSale(
           payload,
           clientSaleId,

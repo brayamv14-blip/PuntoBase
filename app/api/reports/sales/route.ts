@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
+import { dayEndISO, dayStartISO, todayDateString } from "@/lib/utils";
 
 type ReportSale = {
   id: string;
@@ -25,12 +26,12 @@ export async function GET(req: NextRequest) {
 
     const from =
       searchParams.get("from") ??
-      new Date().toISOString().split("T")[0];
+      todayDateString();
 
     const to = searchParams.get("to") ?? from;
 
-    const fromISO = `${from}T00:00:00.000Z`;
-    const toISO = `${to}T23:59:59.999Z`;
+    const fromISO = dayStartISO(from);
+    const toISO = dayEndISO(to);
 
     const { data: sales, error } = await supabase
       .from("sales")

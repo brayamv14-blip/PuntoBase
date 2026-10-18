@@ -149,8 +149,8 @@ async function flushQueueUnlocked(
   isFlushing = true;
 
   try {
-    // 1) Altas de producto pendientes (las ventas pueden depender de ellas).
-    await flushOps(["create_product"], undefined, (op, message) =>
+    // 1) Altas y ediciones de producto pendientes (las ventas pueden depender de ellas).
+    await flushOps(["create_product", "update_product"], undefined, (op, message) =>
       onError(op.id, message)
     );
 

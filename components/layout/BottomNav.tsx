@@ -10,6 +10,7 @@ import {
   Wallet,
   Banknote,
   BarChart2,
+  ArrowLeftRight,
   type LucideIcon,
 } from "lucide-react";
 
@@ -24,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/pos", label: "Punto de venta", icon: ShoppingCart },
   { href: "/products", label: "Inventario", icon: Package },
   { href: "/expenses", label: "Gastos", icon: Wallet },
+  { href: "/transfers", label: "Transferencias", icon: ArrowLeftRight },
   { href: "/eod", label: "Cierre de caja", icon: Banknote },
   { href: "/reports", label: "Reportes", icon: BarChart2 },
 ];

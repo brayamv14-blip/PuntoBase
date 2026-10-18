@@ -36,7 +36,7 @@ function barHeight(value: number, max: number) {
 }
 
 export async function SalesStats() {
-  const now = Date.now();
+  const now = new Date().getTime();
   const since7 = new Date(now - 7 * 86400000).toISOString();
   const since30 = new Date(now - 30 * 86400000).toISOString();
 
