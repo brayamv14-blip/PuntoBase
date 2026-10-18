@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { enqueueOp } from "@/lib/offline-ops";
 import { formatCurrency } from "@/lib/utils";
 
 interface RegisterData {
@@ -26,6 +27,9 @@ interface RegisterData {
   discrepancy: number | null;
   closed_at: string | null;
   is_closed: boolean;
+  transfer_paid_total?: number;
+  transfer_pending_total?: number;
+  transfer_pending_count?: number;
 }
 
 export default function EodPage() {
@@ -33,10 +37,18 @@ export default function EodPage() {
   const [actualCash, setActualCash] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [offline, setOffline] = useState(false);
 
   async function loadData() {
-    const res = await apiFetch("/api/cash-register/today");
-    setData(await res.json());
+    try {
+      const res = await apiFetch("/api/cash-register/today");
+      if (!res.ok) throw new Error("No se pudo cargar la caja");
+      setData(await res.json());
+      setOffline(false);
+    } catch {
+      // Sin conexion: se permite capturar el corte y se calcula al sincronizar.
+      setOffline(true);
+    }
   }
 
   useEffect(() => {
@@ -48,6 +60,23 @@ export default function EodPage() {
 
     if (!actualCash || Number(actualCash) < 0) {
       toast.error("Ingresa una cantidad válida para el efectivo contado.");
+      return;
+    }
+
+    // Sin conexion: el corte se guarda en el dispositivo y se cierra la caja al reconectar.
+    if (!navigator.onLine) {
+      try {
+        await enqueueOp("close_cash_register", {
+          actual_cash: Number(actualCash),
+          notes: notes.trim() || null,
+          date: new Date().toISOString().split("T")[0],
+        });
+        toast.success("Corte guardado en el dispositivo. La caja se cerrará al reconectar.");
+        setActualCash("");
+        setNotes("");
+      } catch {
+        toast.error("No se pudo guardar el corte en el dispositivo.");
+      }
       return;
     }
 
@@ -77,6 +106,49 @@ export default function EodPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (!data && offline) {
+    return (
+      <div className="p-4 space-y-4 max-w-lg mx-auto">
+        <div>
+          <h1 className="font-bold text-2xl tracking-tight">Corte de caja</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Sin conexión. Captura el efectivo contado: el sistema calculará el efectivo
+            esperado y la diferencia cuando se sincronice.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="bg-card border rounded-xl p-4 space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="actual-cash-offline">Efectivo contado (MXN) *</Label>
+            <Input
+              id="actual-cash-offline"
+              type="number"
+              min="0"
+              step="0.01"
+              value={actualCash}
+              onChange={(e) => setActualCash(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="notes-offline">Observaciones (opcional)</Label>
+            <Textarea
+              id="notes-offline"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+            />
+          </div>
+
+          <Button type="submit" className="w-full">
+            Guardar corte en el dispositivo
+          </Button>
+        </form>
+      </div>
+    );
   }
 
   if (!data) {
@@ -170,6 +242,35 @@ export default function EodPage() {
               </div>
             </>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Transferencias del día</CardTitle>
+        </CardHeader>
+
+        <CardContent className="space-y-2 text-sm">
+          <div className="flex justify-between gap-3">
+            <span className="text-muted-foreground">Confirmadas</span>
+            <span className="font-medium text-green-600">
+              {formatCurrency(data.transfer_paid_total ?? 0)}
+            </span>
+          </div>
+
+          <div className="flex justify-between gap-3">
+            <span className="text-muted-foreground">
+              Pendientes de confirmar ({data.transfer_pending_count ?? 0})
+            </span>
+            <span className="font-medium text-amber-600">
+              {formatCurrency(data.transfer_pending_total ?? 0)}
+            </span>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Las transferencias no entran al efectivo esperado. Confirma cada pago en el
+            recibo de la venta cuando veas el depósito en tu banco.
+          </p>
         </CardContent>
       </Card>
 

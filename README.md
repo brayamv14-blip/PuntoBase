@@ -1,76 +1,67 @@
 # PuntoBase — Plataforma PWA para la Gestión de Pequeños Negocios
 
-A point-of-sale and stock management system built for an arowana fish store. Runs as a PWA (Progressive Web App) installable on Android and iOS.
+Proyecto de la materia *Aplicaciones Web Progresivas* (DGS 1002, UTFV, profesora Sandra Alfaro Linares).
+PWA offline-first para controlar inventario con códigos QR/barras, ventas en mostrador (efectivo y
+transferencia), corte de caja y estadísticas, pensada para pequeños negocios con internet inestable.
 
-## Tech Stack
+> Base de código: [ardiChuan/POS-StockManagement](https://github.com/ardiChuan/POS-StockManagement)
+> (el repositorio original no declara licencia; se usa como punto de partida con conocimiento de la
+> profesora y se documentan abajo los cambios del equipo).
 
-- Next.js 15 (App Router) — deployed on Vercel
-- Tailwind CSS v4
-- Supabase (PostgreSQL + Storage)
-- PWA via `@ducanh2912/next-pwa`
+## Funcionalidades
 
-## Features
+| Módulo | Qué hace |
+|---|---|
+| Escáner QR/barras | `html5-qrcode` con la cámara trasera. Se usa para dar de alta productos, buscar en inventario y **agregar al carrito en el POS**. |
+| Semáforo de inventario | Verde (sobre el mínimo), amarillo (igual o menor al mínimo), rojo (agotado; bloquea la venta). `lib/stock-status.ts`. |
+| Ventas | Efectivo (cobrada al instante) y transferencia (**pendiente** hasta "Confirmar pago"). Descuenta inventario al vender. |
+| Corte de caja | Efectivo esperado = fondo inicial + ventas en efectivo − gastos; diferencia contra lo contado; **desglose de transferencias confirmadas y pendientes**. |
+| Dashboard | Ventas por día (7 días), ventas por hora (hoy), **Top 10 más vendidos**, alertas de inventario bajo y **lista de compras** con un clic. |
+| Catálogo web | Página pública `/catalogo` (nombre, precio y disponibilidad; sin cantidades exactas). Se comparte desde el dashboard. |
+| Offline-first | Catálogo, ventas, altas de producto y corte de caja se guardan primero en IndexedDB. |
+| Sincronización | **Background Sync API** (`worker/index.ts`) + respaldo con el evento `online` y botón "Sincronizar ahora". Ventas idempotentes con `client_sale_id`. |
 
-- **POS** — sell individual fish or stock products, apply discounts, cash/transfer payment
-- **Fish management** — track individual arowana by ID, tank, size, and photo
-- **Product management** — products with optional size variants and stock levels
-- **Stock adjustment** — manual stock in/out with notes and adjustment history
-- **Expenses** — record daily operational expenses
-- **Cash register (EOD)** — end-of-day cash count with discrepancy tracking
-- **Reports** — sales and expense reports by date range
-- **Inventory report** — stock levels with low stock and out-of-stock indicators
-- **Offline support** — cash sales queued in IndexedDB when offline, synced on reconnect
-- **Multi-device** — role-based access (owner / admin / cashier) across multiple devices
+## Arquitectura
 
-## Project Structure
+- Next.js (App Router) + `@ducanh2912/next-pwa` (Service Worker, Workbox, manifest).
+- API REST con *route handlers* de Next.js (`app/api/**`) y PostgreSQL en Supabase.
+- IndexedDB con la librería `idb`: `lib/catalog-cache.ts`, `lib/local-sales.ts`, `lib/offline-queue.ts`, `lib/offline-ops.ts`.
+- Conflictos: última escritura gana en inventario; las ventas son idempotentes por `client_sale_id`.
 
-```
-/
-├── app/                  # Next.js App Router
-│   ├── (auth)/setup/     # Device registration
-│   ├── (app)/            # Main app (pos, fish, products, expenses, eod, reports)
-│   └── api/              # Next.js API routes (auth, sales, products, fish, stock, reports…)
-├── components/           # Reusable UI components
-├── lib/
-│   ├── api.ts            # Central fetch client
-│   ├── auth.ts           # Server-side auth utilities
-│   ├── offline-queue.ts  # IndexedDB offline sale queue
-│   ├── supabase/         # Supabase server client + storage helpers
-│   └── utils.ts
-├── hooks/                # React hooks
-├── types/                # Shared TypeScript types
-└── public/               # PWA manifest, icons
-```
-
-## Environment Variables
+## Variables de entorno
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+NEXT_PUBLIC_SUPABASE_URL=https://tu-proyecto.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=tu-anon-key
+SUPABASE_SERVICE_ROLE_KEY=tu-service-role-key
 ```
 
-## Local Development
+## Base de datos
+
+Ejecutar en Supabase, en este orden: `supabase/schema.sql`, `supabase/puntobase-migration.sql`,
+`supabase/puntobase-migration-2.sql`.
+
+## Desarrollo
 
 ```bash
 npm install
-npm run dev
+npm run dev      # el Service Worker se desactiva en desarrollo
+npm run build && npm start   # para probar la PWA y Background Sync
 ```
 
+Probar offline: Chrome → DevTools → Application → Service Workers → Offline. Probar Background
+Sync: marcar "Offline", vender, desmarcar y revisar "Sync" en la misma pestaña.
 
----
+## Limitantes del MVP
 
-## Créditos y cambios (PuntoBase)
+- Solo efectivo y transferencia manual; sin tarjeta ni pasarelas de pago.
+- Altas de producto sin conexión solo para productos sin variantes.
+- Safari/iOS no soporta Background Sync: se usa el evento `online` y el botón de sincronizar.
+- Un solo negocio por instalación (sin `tenant_id` multi-negocio todavía).
+- Fechas de caja y "hoy" del panel usan días UTC; las gráficas de ventas usan hora de la Ciudad de México.
 
-Proyecto escolar de *Aplicaciones Web Progresivas* (UTFV, prof. Sandra Alfaro Linares).
-Parte de una base de código de terceros: [ardiChuan/POS-StockManagement](https://github.com/ardiChuan/POS-StockManagement)
-(el repositorio original no declara licencia; se usa como punto de partida con conocimiento de la profesora).
+## Créditos y cambios del equipo
 
-Cambios del equipo sobre la base:
-- Marca y manifest PuntoBase; se eliminó el módulo de peces (`fish`).
-- Escáner con cámara (`html5-qrcode`) en el formulario de producto y en la búsqueda de inventario.
-- Semáforo de inventario verde / amarillo / rojo (`lib/stock-status.ts`).
-- Estado de pago: las transferencias quedan como *Transferencia pendiente* y se consolidan con *Confirmar pago*.
-- Migración SQL: `supabase/puntobase-migration.sql` (ejecutar después de `schema.sql`).
-
-Pendiente del equipo: cola offline completa con Dexie (hoy solo ventas en efectivo con `idb`), Background Sync API, dashboard con gráficas, pruebas con Lighthouse.
+Cambios sobre la base original: marca PuntoBase, eliminación del módulo de peces, escáner con cámara,
+semáforo, transferencia pendiente con "Confirmar pago", catálogo en caché, ventas locales, cola
+offline, Background Sync, estadísticas, catálogo público y desglose de transferencias en el corte.

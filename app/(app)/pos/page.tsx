@@ -16,9 +16,16 @@ import {
 } from "@/components/ui/select";
 import { Banknote, Building2, ShoppingBag } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { ScannerButton } from "@/components/scanner/Scanner";
+import { getStockStatus } from "@/lib/stock-status";
+import { getCachedProducts } from "@/lib/catalog-cache";
 import { useCart } from "@/hooks/useCart";
 import { apiFetch } from "@/lib/api";
-import { enqueueSale, flushQueue } from "@/lib/offline-queue";
+import {
+  enqueueSale,
+  flushQueue,
+  restorePendingSalesFromLocalStorage,
+} from "@/lib/offline-queue";
 import {
   createLocalSaleSnapshot,
   markLocalSaleSynced,
@@ -29,6 +36,7 @@ import type {
   CartItem,
   DiscountType,
   CreateSaleRequest,
+  ProductWithVariants,
 } from "@/types";
 
 export default function PosPage() {
@@ -47,58 +55,83 @@ export default function PosPage() {
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
 
-  useEffect(() => {
-    let active = true;
+  
+useEffect(() => {
+  let active = true;
 
-    const syncPendingSales = () => {
-      if (!navigator.onLine) return;
+  const syncPendingSales = () => {
+    if (!navigator.onLine) return;
 
-      void flushQueue(
-        (localId, saleId) => {
-          void markLocalSaleSynced(localId, saleId)
-            .then(() => {
-              if (!active) return;
+    void flushQueue(
+      (localId, saleId) => {
+        if (!active) return;
 
-              setOfflineReceipt((previous) => {
-                if (!previous || previous.id !== localId) {
-                  return previous;
-                }
-
-                return {
-                  ...previous,
-                  local_status: "synced",
-                  server_sale_id: saleId,
-                };
-              });
-
-              toast.success(
-                "Venta pendiente sincronizada correctamente."
-              );
-            })
-            .catch(() => {
-              if (active) {
-                toast.warning(
-                  "La venta se sincronizó, pero no se pudo actualizar el comprobante local."
-                );
-              }
-            });
-        },
-        (_id: string, error: string) => {
-          if (active) {
-            toast.error(`Error al sincronizar la venta: ${error}`);
+        setOfflineReceipt((previous) => {
+          if (!previous || previous.id !== localId) {
+            return previous;
           }
+
+          return {
+            ...previous,
+            local_status: "synced",
+            server_sale_id: saleId,
+          };
+        });
+
+        toast.success(
+          "Venta pendiente sincronizada correctamente."
+        );
+      },
+      (_id, error) => {
+        if (active) {
+          toast.error(`Error al sincronizar la venta: ${error}`);
         }
+      }
+    );
+  };
+
+  const recoverAndSync = async () => {
+    try {
+      const restored =
+        await restorePendingSalesFromLocalStorage();
+
+      if (active && restored > 0) {
+        toast.info(
+          `Se recuperaron ${restored} venta(s) pendientes.`
+        );
+      }
+
+      if (navigator.onLine && active) {
+        syncPendingSales();
+      }
+    } catch (error) {
+      console.error(
+        "Error recuperando ventas pendientes:",
+        error
       );
-    };
 
-    window.addEventListener("online", syncPendingSales);
-    syncPendingSales();
+      if (active) {
+        toast.error(
+          "No se pudieron recuperar las ventas pendientes. Los datos locales se conservaron."
+        );
+      }
+    }
+  };
 
-    return () => {
-      active = false;
-      window.removeEventListener("online", syncPendingSales);
-    };
-  }, []);
+  const handleOnline = () => {
+    void recoverAndSync();
+  };
+
+  window.addEventListener("online", handleOnline);
+
+  void recoverAndSync();
+
+  return () => {
+    active = false;
+    window.removeEventListener("online", handleOnline);
+  };
+}, []);
+
 
   useEffect(() => {
     if (customerMode !== "search" || !customerQuery.trim()) {
@@ -406,6 +439,73 @@ export default function PosPage() {
     );
   }
 
+  // Venta por escaneo: lee el codigo con la camara y agrega el producto al carrito.
+  async function handleScanToCart(code: string) {
+    let products: ProductWithVariants[] | null = null;
+
+    try {
+      products = await getCachedProducts();
+    } catch {
+      products = null;
+    }
+
+    if ((!products || products.length === 0) && navigator.onLine) {
+      try {
+        const res = await apiFetch("/api/products");
+        if (res.ok) {
+          const data: unknown = await res.json();
+          if (Array.isArray(data)) products = data as ProductWithVariants[];
+        }
+      } catch {
+        // se muestra el aviso de abajo
+      }
+    }
+
+    if (!products) {
+      toast.error("No hay una copia local del inventario. Conéctate para cargarla.");
+      return;
+    }
+
+    const product = products.find((p) => p.barcode === code);
+    if (!product) {
+      toast.error("Código no registrado en el inventario.");
+      return;
+    }
+
+    const variants = product.variants ?? [];
+    if (variants.length !== 1) {
+      toast.error(`"${product.name}" tiene varias presentaciones. Agrégalo desde Inventario.`);
+      return;
+    }
+
+    const variant = variants[0];
+    const key = `product-${product.id}-${variant.id}`;
+    const inCart = cart.items.find((item) => item.key === key)?.qty ?? 0;
+    const status = getStockStatus(variant.stock_qty, variant.low_stock_threshold);
+
+    if (product.track_stock && (status === "red" || inCart + 1 > variant.stock_qty)) {
+      toast.error(`${product.name}: sin existencias suficientes (${variant.stock_qty}).`);
+      return;
+    }
+
+    cart.addItem({
+      key,
+      item_type: "product",
+      product_id: product.id,
+      variant_id: variant.id,
+      category_name: product.category?.name ?? undefined,
+      description: product.name,
+      unit_price: variant.price,
+      qty: 1,
+    });
+
+    toast.success(
+      status === "yellow"
+        ? `${product.name} agregado (quedan pocas piezas)`
+        : `${product.name} agregado`
+    );
+  }
+
   if (cart.items.length === 0) {
     return (
       <div className="max-w-lg mx-auto w-full flex flex-col items-center justify-center h-[calc(100vh-80px)] gap-3 p-4 text-center">
@@ -421,6 +521,8 @@ export default function PosPage() {
         <p className="text-sm text-muted-foreground">
           Agrega productos desde la sección de inventario.
         </p>
+
+        <ScannerButton onScan={handleScanToCart} label="Escanear producto" />
 
         <Link href="/products">
           <Button>Ver inventario</Button>
@@ -443,11 +545,15 @@ export default function PosPage() {
           </p>
         </div>
 
-        <Link href="/products">
-          <Button size="sm" variant="outline">
-            + Agregar productos
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ScannerButton onScan={handleScanToCart} />
+
+          <Link href="/products">
+            <Button size="sm" variant="outline">
+              + Agregar productos
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">

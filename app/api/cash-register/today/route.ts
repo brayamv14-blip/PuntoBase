@@ -41,6 +41,21 @@ export async function GET() {
   const dateStart = `${dateStr}T00:00:00.000Z`;
   const dateEnd = `${dateStr}T23:59:59.999Z`;
 
+  // Transferencias del dia: cobradas vs pendientes de confirmar.
+  const { data: transferData } = await supabase
+    .from("sales")
+    .select("total, payment_status")
+    .neq("payment_method", "cash")
+    .gte("created_at", dateStart)
+    .lte("created_at", dateEnd);
+
+  const transferRows = (transferData ?? []) as { total: number; payment_status: string }[];
+  const transferPaidTotal = transferRows
+    .filter((r) => r.payment_status === "paid")
+    .reduce((s, r) => s + Number(r.total), 0);
+  const transferPending = transferRows.filter((r) => r.payment_status === "pending");
+  const transferPendingTotal = transferPending.reduce((s, r) => s + Number(r.total), 0);
+
   const [{ data: salesData }, { data: expensesData }] = await Promise.all([
     supabase
       .from("sales")
@@ -64,6 +79,9 @@ export async function GET() {
     date: dateStr,
     opening_balance: openingBalance,
     cash_sales_total: cashSalesTotal,
+    transfer_paid_total: transferPaidTotal,
+    transfer_pending_total: transferPendingTotal,
+    transfer_pending_count: transferPending.length,
     expenses_total: expensesTotal,
     expected_cash: expectedCash,
     actual_cash: register?.actual_cash ?? null,

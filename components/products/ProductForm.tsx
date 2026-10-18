@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { ScannerButton } from "@/components/scanner/Scanner";
+import { enqueueOp } from "@/lib/offline-ops";
 import type { Product, ProductVariant, Category } from "@/types";
 
 interface ProductFormProps {
@@ -105,6 +106,27 @@ export function ProductForm({ product }: ProductFormProps) {
     try {
       const blankVariant = variants.find((v) => (v.size_label ?? "") === "");
       const threshold = lowStockAlertEnabled ? (Number(lowStockThreshold) || 5) : 0;
+
+      // Sin conexion: el alta se guarda en el dispositivo y se envia al reconectar.
+      if (!isEdit && !navigator.onLine) {
+        if (hasVariants) {
+          toast.error("Los productos con variantes necesitan conexión a internet.");
+          return;
+        }
+
+        await enqueueOp("create_product", {
+          name: name.trim(),
+          category_id: categoryId,
+          barcode,
+          track_stock: trackStock,
+          price: blankVariant ? Number(blankVariant.price ?? 0) : null,
+          stock_qty: blankVariant ? (trackStock ? Number(blankVariant.stock_qty ?? 0) : 0) : null,
+          low_stock_threshold: threshold,
+        });
+        toast.success("Producto guardado en el dispositivo. Se creará al reconectar.");
+        router.push("/products");
+        return;
+      }
 
       // Guardar el producto
       const url = isEdit ? `/api/products/${product!.id}` : "/api/products";

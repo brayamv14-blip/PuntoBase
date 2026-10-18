@@ -7,10 +7,15 @@ export async function POST(req: NextRequest) {
   const device = await getDeviceFromCookies();
   if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { actual_cash, notes } = await req.json();
+  const { actual_cash, notes, date } = await req.json();
   if (actual_cash == null) return NextResponse.json({ error: "actual_cash required" }, { status: 400 });
 
-  const today = new Date().toISOString().split("T")[0];
+  // Un corte hecho sin conexion llega despues: usa la fecha en que se capturo.
+  const utcToday = new Date().toISOString().split("T")[0];
+  const today =
+    typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= utcToday
+      ? date
+      : utcToday;
 
   // Find today's register (open or closed)
   let { data: register } = await supabase

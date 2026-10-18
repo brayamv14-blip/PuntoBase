@@ -13,6 +13,11 @@ import {
   PackageX,
 } from "lucide-react";
 import type { CashRegister, Sale, VariantWithProduct } from "@/types";
+import { SalesStats } from "@/components/dashboard/SalesStats";
+import {
+  CatalogLinkButton,
+  ShoppingListButton,
+} from "@/components/dashboard/ShareButtons";
 
 export const dynamic = "force-dynamic";
 
@@ -340,6 +345,19 @@ export default async function DashboardPage() {
           ))}
         </CardContent>
       </Card>
+
+      {allAlertItems.length > 0 && (
+        <ShoppingListButton
+          items={allAlertItems.map((item) => ({
+            name: item.name,
+            stock_qty: item.stock_qty,
+          }))}
+        />
+      )}
+
+      <SalesStats />
+
+      <CatalogLinkButton />
     </div>
   );
 }
