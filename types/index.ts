@@ -81,7 +81,7 @@ export interface Customer {
 
 export type PaymentMethod = 'cash' | 'bank_transfer';
 export type DiscountType = 'flat' | 'percent';
-export type PaymentStatus = 'paid' | 'pending';
+export type PaymentStatus = 'paid' | 'pending' | 'rejected';
 
 export interface Sale {
   id: string;
@@ -197,5 +197,7 @@ export interface CreateSaleRequest {
   discount_value?: number;
   payment_method: PaymentMethod;
   notes?: string;
+  /** Solo ventas hechas sin conexion: fecha ISO en que ocurrio la venta. */
+  created_at?: string;
 }
 

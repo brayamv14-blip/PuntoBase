@@ -4,9 +4,12 @@ import { getDeviceFromCookies } from "@/lib/auth";
 import type { CreateSaleRequest, PaymentMethod } from "@/types";
 import { ensureOpenCashRegister } from "@/lib/cash-register";
 import { notifySaleEvents } from "@/lib/push-events";
+import { dayEndISO, dayStartISO, todayDateString } from "@/lib/utils";
+import { resolveSaleDate } from "@/lib/sale-date";
 
 type SaleRequestWithClientId = CreateSaleRequest & {
   client_sale_id?: string;
+  created_at?: string;
 };
 
 // GET /api/sales
@@ -38,6 +41,11 @@ export async function GET(req: NextRequest) {
       )
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
+
+    // Las transferencias rechazadas no son ventas vigentes (se pueden pedir con ?include_rejected=1).
+    if (searchParams.get("include_rejected") !== "1") {
+      query = query.neq("payment_status", "rejected");
+    }
 
     if (from) query = query.gte("created_at", from);
     if (to) query = query.lte("created_at", to);
@@ -84,6 +92,14 @@ export async function POST(req: NextRequest) {
       notes,
       client_sale_id,
     } = body;
+
+    // Una venta hecha sin conexion conserva la fecha en que ocurrio (no la de la sincronizacion).
+    // Solo se acepta si trae client_sale_id y la fecha es razonable.
+    const nowDate = new Date();
+    const saleDate = client_sale_id
+      ? resolveSaleDate(body.created_at, nowDate)
+      : nowDate;
+    const isOfflineSync = !!client_sale_id;
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
@@ -177,6 +193,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Validar productos y variantes.
+    // Una venta sincronizada (client_sale_id) ya ocurrio fisicamente: no se rechaza por falta de
+    // existencias; se registra, el inventario queda en 0 y se marca para revision.
     for (const item of items) {
       const { data: product, error: productError } = await supabase
         .from("products")
@@ -205,7 +223,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      if (product.track_stock && variant.stock_qty < item.qty) {
+      if (product.track_stock && variant.stock_qty < item.qty && !isOfflineSync) {
         return NextResponse.json(
           { error: `Existencias insuficientes para ${item.description}` },
           { status: 409 }
@@ -228,19 +246,16 @@ export async function POST(req: NextRequest) {
 
     const total = Math.max(0, subtotal - discountAmount);
 
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10).replace(/-/g, "");
-    const startOfDay = new Date(now);
-    startOfDay.setUTCHours(0, 0, 0, 0);
-
-    const nextDay = new Date(startOfDay);
-    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    const now = saleDate;
+    // Folio por dia calendario de la Ciudad de Mexico (no UTC).
+    const mxDay = todayDateString(now);
+    const today = mxDay.replace(/-/g, "");
 
     const { count, error: countError } = await supabase
       .from("sales")
       .select("id", { count: "exact", head: true })
-      .gte("created_at", startOfDay.toISOString())
-      .lt("created_at", nextDay.toISOString());
+      .gte("created_at", dayStartISO(mxDay))
+      .lte("created_at", dayEndISO(mxDay));
 
     if (countError) throw countError;
 
@@ -257,6 +272,7 @@ export async function POST(req: NextRequest) {
       payment_status: payment_method === "cash" ? "paid" : "pending",
       paid_at: payment_method === "cash" ? now.toISOString() : null,
       notes: notes?.trim() || null,
+      created_at: now.toISOString(),
     };
 
     // Insertar venta.
@@ -322,7 +338,7 @@ export async function POST(req: NextRequest) {
       throw saleError ?? new Error("No se pudo crear la venta.");
     }
 
-    return await processSaleItems(sale, items, device.id);
+    return await processSaleItems(sale, items, device.id, isOfflineSync);
   } catch (error) {
     console.error("[sales POST]", error);
     return NextResponse.json(
@@ -335,7 +351,8 @@ export async function POST(req: NextRequest) {
 async function processSaleItems(
   sale: { id: string; payment_method: string },
   items: CreateSaleRequest["items"],
-  deviceId: string
+  deviceId: string,
+  allowShortage = false
 ) {
   const now = new Date().toISOString();
 
@@ -345,6 +362,7 @@ async function processSaleItems(
     newQty: number;
   }> = [];
 
+  const shortages: string[] = [];
   let saleItemsInserted = false;
 
   try {
@@ -387,11 +405,13 @@ async function processSaleItems(
         throw variantError ?? new Error("No se encontró la variante.");
       }
 
-      if (variant.stock_qty < item.qty) {
+      const short = variant.stock_qty < item.qty;
+      if (short && !allowShortage) {
         throw new Error(`Existencias insuficientes para ${item.description}.`);
       }
+      if (short) shortages.push(`${item.description}: vendidas ${item.qty}, había ${variant.stock_qty}`);
 
-      const newQty = variant.stock_qty - item.qty;
+      const newQty = Math.max(0, variant.stock_qty - item.qty);
 
       // Actualización condicional para detectar cambios concurrentes.
       const { data: updated, error: updateError } = await supabase
@@ -424,9 +444,9 @@ async function processSaleItems(
           variant_id: item.variant_id!,
           adjustment_type: "sale",
           qty_before: variant.stock_qty,
-          qty_change: -item.qty,
+          qty_change: newQty - variant.stock_qty,
           qty_after: newQty,
-          note: `Sale ${sale.id}`,
+          note: short ? `Sale ${sale.id} (faltante de inventario al sincronizar)` : `Sale ${sale.id}`,
           device_id: deviceId,
           related_sale_id: sale.id,
         });
@@ -436,8 +456,17 @@ async function processSaleItems(
 
     await ensureOpenCashRegister();
 
-    // Notificaciones push (transferencia pendiente, inventario bajo/agotado).
-    after(() => notifySaleEvents(sale.id, insertedVariantChanges));
+    let attentionNote: string | null = null;
+    if (shortages.length > 0) {
+      attentionNote = `Inventario insuficiente al sincronizar (${shortages.length} artículo${shortages.length === 1 ? "" : "s"})`;
+      await supabase
+        .from("sales")
+        .update({ needs_attention: true, attention_note: shortages.join("; ").slice(0, 500) })
+        .eq("id", sale.id);
+    }
+
+    // Notificaciones push (transferencia pendiente, revision, inventario bajo/agotado).
+    after(() => notifySaleEvents(sale.id, insertedVariantChanges, deviceId, attentionNote));
 
     return NextResponse.json({ id: sale.id }, { status: 201 });
   } catch (error) {

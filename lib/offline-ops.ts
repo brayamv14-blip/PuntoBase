@@ -47,7 +47,7 @@ export interface UpdateProductPayload {
 
 export interface FailedOp {
   id: string;
-  type: OfflineOpType;
+  type: OfflineOpType | "sale";
   message: string;
 }
 
@@ -238,6 +238,8 @@ async function runUpdateProduct(
       variant_id: payload.stock.variant_id,
       qty_change: payload.stock.qty_change,
       note: payload.stock.note,
+      // Si la respuesta se pierde y la operacion se repite, el servidor no duplica el ajuste.
+      client_op_id: `${op.id}:stock`,
     });
     if (!res.ok) throw new Error(await responseError(res));
     await mark("stock");
@@ -248,7 +250,10 @@ async function runUpdateProduct(
 
 async function runSimpleOp(op: OfflineOp): Promise<void> {
   const path = op.type === "create_product" ? "/api/products" : "/api/cash-register/close";
-  const res = await send(path, "POST", op.payload);
+  // El corte de caja lleva un identificador propio para que un reintento no lo duplique.
+  const body =
+    op.type === "close_cash_register" ? { ...op.payload, client_close_id: op.id } : op.payload;
+  const res = await send(path, "POST", body);
   if (!res.ok) throw new Error(await responseError(res));
 }
 

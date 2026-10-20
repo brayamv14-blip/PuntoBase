@@ -6,6 +6,7 @@ import { dayEndISO, dayStartISO } from "@/lib/utils";
 export async function GET(req: NextRequest) {
   try {
     const device = await getDeviceFromCookies();
+    if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
     const from = searchParams.get("from");

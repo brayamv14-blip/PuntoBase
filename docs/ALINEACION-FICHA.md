@@ -39,3 +39,9 @@ Estado de cada punto del documento (Ficha Técnica, secciones 3 y 4).
 
 - **Express**: el backend usa los route handlers de Next.js. Mantener Express obligaría a un servidor propio y dejaría de funcionar en Vercel/Netlify (hosting que la propia Ficha propone). Conviene redactar: "API REST con Next.js Route Handlers sobre Node.js".
 - **`tenant_id` multi-negocio**: requiere agregar la columna a todas las tablas, filtrar cada consulta por negocio y rehacer el alta de dispositivos. Conviene documentarlo como "siguiente fase" o implementarlo como trabajo aparte.
+
+## Actualización (auditoría)
+- Push: ahora con preferencias, diagnóstico, deduplicación y eventos automáticos (ver `INFORME-RESULTADOS.md`).
+- Transferencias: se agregó **rechazo** con restitución de inventario (la ficha solo describe confirmar).
+- Seguridad: RLS activado en todas las tablas (migración 5).
+- Multi-tenant: sigue sin implementarse; decisión pendiente del equipo.

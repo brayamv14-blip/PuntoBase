@@ -3,7 +3,8 @@
  *  - Background Sync API: al volver la red se vacia la cola de IndexedDB aunque la app este cerrada.
  *  - Push API: muestra las notificaciones enviadas por el servidor y abre la app al tocarlas.
  */
-import { flushQueue } from "../lib/offline-queue";
+import { flushQueue, getFailedItems } from "../lib/offline-queue";
+import { openDb } from "../lib/db";
 import { SYNC_TAG, SYNC_DONE_MESSAGE } from "../lib/background-sync";
 
 interface ExtendableEventLike extends Event {
@@ -34,6 +35,7 @@ interface WorkerScope {
   ): void;
   registration: {
     showNotification(title: string, options?: Record<string, unknown>): Promise<void>;
+    pushManager: { getSubscription(): Promise<unknown | null> };
   };
   clients: {
     matchAll(options?: { type?: string; includeUncontrolled?: boolean }): Promise<WindowClientLike[]>;
@@ -43,6 +45,46 @@ interface WorkerScope {
 }
 
 const sw = self as unknown as WorkerScope;
+
+// ---------- Avisos locales de sincronizacion ----------
+const SYNC_ALERT_FLAG = "sync_alert_active";
+
+/**
+ * Notificacion local (no depende del servidor) cuando la sincronizacion necesita intervencion
+ * del usuario (el servidor rechazo una operacion) y cuando se recupera. Solo si el usuario
+ * activo las notificaciones en este dispositivo.
+ */
+async function notifySyncState(): Promise<void> {
+  try {
+    if (!(await sw.registration.pushManager.getSubscription())) return;
+
+    const db = await openDb();
+    const failed = await getFailedItems();
+    const active = await db.meta.get(SYNC_ALERT_FLAG);
+
+    if (failed.length > 0 && !active) {
+      await sw.registration.showNotification("Sincronización con errores", {
+        body: `${failed.length} operación${failed.length === 1 ? "" : "es"} necesita${failed.length === 1 ? "" : "n"} tu revisión.`,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        tag: "sync-error",
+        data: { url: "/dashboard" },
+      });
+      await db.meta.put({ key: SYNC_ALERT_FLAG, value: new Date().toISOString() });
+    } else if (failed.length === 0 && active) {
+      await sw.registration.showNotification("Sincronización recuperada", {
+        body: "Las operaciones pendientes ya se sincronizaron.",
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        tag: "sync-error",
+        data: { url: "/dashboard" },
+      });
+      await db.meta.delete(SYNC_ALERT_FLAG);
+    }
+  } catch (error) {
+    console.error("[sw] No se pudo evaluar el aviso de sincronización:", error);
+  }
+}
 
 // ---------- Background Sync ----------
 async function runSync(): Promise<void> {
@@ -57,6 +99,8 @@ async function runSync(): Promise<void> {
       failures++;
     }
   );
+
+  await notifySyncState();
 
   const windows = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
   for (const client of windows) {

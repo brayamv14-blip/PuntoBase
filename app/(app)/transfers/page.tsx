@@ -8,6 +8,8 @@ import { apiFetch } from "@/lib/api";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 
 interface PendingTransfer {
+  needs_attention?: boolean;
+  attention_note?: string | null;
   id: string;
   sale_number: string;
   total: number;
@@ -39,6 +41,39 @@ export default function TransfersPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function reject(item: PendingTransfer) {
+    if (!navigator.onLine) {
+      toast.error("Necesitas conexión para rechazar una transferencia.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `¿Rechazar la transferencia de ${formatCurrency(Number(item.total))}? La venta se cancela y las existencias regresan al inventario.`
+      )
+    )
+      return;
+    const reason = window.prompt("Motivo (opcional):") ?? "";
+
+    setConfirming(item.id);
+    try {
+      const res = await apiFetch("/api/transfers", {
+        method: "POST",
+        body: JSON.stringify({ id: item.id, action: "reject", reason }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        toast.error(json.error ?? "No se pudo rechazar la transferencia.");
+        return;
+      }
+      toast.success("Transferencia rechazada. Inventario restituido.");
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+    } catch {
+      toast.error("Error de conexión al rechazar la transferencia.");
+    } finally {
+      setConfirming(null);
+    }
+  }
 
   async function confirm(item: PendingTransfer) {
     if (!navigator.onLine) {
@@ -107,15 +142,30 @@ export default function TransfersPage() {
                   {item.sale_number} · {formatDateTime(item.created_at)}
                   {item.customer?.name ? ` · ${item.customer.name}` : ""}
                 </p>
+                {item.needs_attention && (
+                  <p className="text-xs text-amber-700">
+                    Revisar: {item.attention_note ?? "inventario insuficiente al sincronizar"}
+                  </p>
+                )}
               </div>
-              <Button
-                size="sm"
-                className="bg-green-600 hover:bg-green-700 flex-shrink-0"
-                disabled={confirming === item.id}
-                onClick={() => void confirm(item)}
-              >
-                {confirming === item.id ? "Confirmando…" : "Confirmar pago"}
-              </Button>
+              <div className="flex flex-col gap-1 flex-shrink-0">
+                <Button
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700"
+                  disabled={confirming === item.id}
+                  onClick={() => void confirm(item)}
+                >
+                  {confirming === item.id ? "Procesando…" : "Confirmar pago"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={confirming === item.id}
+                  onClick={() => void reject(item)}
+                >
+                  Rechazar
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ))}
