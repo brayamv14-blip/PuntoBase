@@ -46,3 +46,11 @@ next-env.d.ts
 
 CLAUDE.md 
 AGENTS.md
+
+# PWA: archivos generados por next-pwa en cada build
+/public/sw.js
+/public/sw.js.map
+/public/swe-worker-*.js
+/public/workbox-*.js
+/public/worker-*.js
+/public/fallback-*.js

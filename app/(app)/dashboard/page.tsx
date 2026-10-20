@@ -50,6 +50,7 @@ export default async function DashboardPage() {
       supabase
         .from("sales")
         .select("total, payment_method")
+        .eq("payment_status", "paid")
         .gte("created_at", todayStart)
         .lte("created_at", todayEnd),
 
@@ -64,6 +65,7 @@ export default async function DashboardPage() {
         .select(
           "id, sale_number, total, payment_method, created_at, customer:customers(name)"
         )
+        .neq("payment_status", "rejected")
         .order("created_at", { ascending: false })
         .limit(10),
 

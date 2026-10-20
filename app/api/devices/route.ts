@@ -5,6 +5,7 @@ import { getDeviceFromCookies } from "@/lib/auth";
 export async function GET() {
   try {
     const device = await getDeviceFromCookies();
+    if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { data, error } = await supabase
       .from("devices")

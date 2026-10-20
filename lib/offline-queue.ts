@@ -2,10 +2,12 @@
 import { openDb } from "./db";
 import { apiFetch } from "./api";
 import { requestBackgroundSync, withFlushLock } from "./background-sync";
-import { flushOps } from "./offline-ops";
+import { flushOps, getFailedOps, clearOpErrors, type FailedOp } from "./offline-ops";
 import {
   getAllLocalSales,
+  getLocalSale,
   markLocalSaleSynced,
+  saveLocalSale,
 } from "./local-sales";
 import type { CreateSaleRequest } from "@/types";
 
@@ -13,6 +15,25 @@ export interface PendingSale {
   localId: string;
   payload: CreateSaleRequest;
   createdAt: string;
+  /** Intentos que el servidor respondio con error (no cuenta las caidas de red). */
+  attempts?: number;
+  lastError?: string;
+  /** No reintentar antes de esta fecha (espera creciente tras errores del servidor). */
+  nextAttemptAt?: string;
+  /** El servidor rechazo la venta de forma definitiva (error 4xx): requiere decision del usuario. */
+  failed?: boolean;
+}
+
+const MAX_BACKOFF_MS = 30 * 60 * 1000;
+
+/** Espera antes del siguiente intento: 30 s, 1 min, 2 min... hasta 30 min. */
+export function backoffMs(attempts: number): number {
+  return Math.min(30_000 * 2 ** Math.max(0, attempts - 1), MAX_BACKOFF_MS);
+}
+
+/** true si el codigo HTTP es un error definitivo de la venta (no se arregla reintentando). */
+export function isPermanentSaleError(status: number): boolean {
+  return status >= 400 && status < 500 && ![401, 403, 408, 425, 429].includes(status);
 }
 
 let isFlushing = false;
@@ -97,6 +118,7 @@ export async function restorePendingSalesFromLocalStorage(): Promise<number> {
       discount_value: Number(sale.discount_value ?? 0),
       payment_method: sale.payment_method,
       notes: sale.notes ?? undefined,
+      created_at: sale.created_at,
     };
 
     await enqueueSale(payload, sale.id);
@@ -116,7 +138,8 @@ export async function restorePendingSalesFromLocalStorage(): Promise<number> {
  */
 async function flushQueueUnlocked(
   onSuccess: (localId: string, saleId: string) => void,
-  onError: (localId: string, error: string) => void
+  onError: (localId: string, error: string) => void,
+  force = false
 ): Promise<void> {
   if (isFlushing || !navigator.onLine) {
     return;
@@ -130,11 +153,20 @@ async function flushQueueUnlocked(
       onError(op.id, message)
     );
 
-    const pending = await getPendingSales();
+    const pending = (await getPendingSales()).sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt)
+    );
+    const db = await openDb();
 
     for (const entry of pending) {
       if (!navigator.onLine) {
         break;
+      }
+
+      // Ventas rechazadas de forma definitiva o en espera de reintento.
+      if (!force) {
+        if (entry.failed) continue;
+        if (entry.nextAttemptAt && entry.nextAttemptAt > new Date().toISOString()) continue;
       }
 
       try {
@@ -142,6 +174,8 @@ async function flushQueueUnlocked(
           method: "POST",
           body: JSON.stringify({
             ...entry.payload,
+            // La venta conserva la fecha en que ocurrio, no la de la sincronizacion.
+            created_at: entry.payload.created_at ?? entry.createdAt,
             client_sale_id: entry.localId,
           }),
         });
@@ -150,35 +184,41 @@ async function flushQueueUnlocked(
           id?: string;
           error?: string;
           duplicate?: boolean;
-        };
+        } = {};
 
         try {
           data = await response.json();
         } catch {
-          onError(
-            entry.localId,
-            "El servidor devolvió una respuesta que no se pudo leer."
-          );
+          data = {};
+        }
+
+        if (response.ok && data.id) {
+          // Actualizar primero el registro local.
+          // Si esto falla, la entrada sigue en la cola para reintentar (el servidor es idempotente).
+          await markLocalSaleSynced(entry.localId, data.id);
+
+          // Solo quitar de la cola después de actualizar IndexedDB.
+          await deletePendingSale(entry.localId);
+
+          onSuccess(entry.localId, data.id);
           continue;
         }
 
-        if (!response.ok || !data.id) {
-          onError(
-            entry.localId,
-            data.error ??
-              `No se pudo sincronizar la venta (HTTP ${response.status}).`
-          );
-          continue;
-        }
+        const message =
+          data.error ?? `No se pudo sincronizar la venta (HTTP ${response.status}).`;
+        const attempts = (entry.attempts ?? 0) + 1;
+        const permanent = isPermanentSaleError(response.status);
 
-        // Actualizar primero el registro local.
-        // Si esto falla, la entrada sigue en la cola para reintentar.
-        await markLocalSaleSynced(entry.localId, data.id);
-
-        // Solo quitar de la cola después de actualizar IndexedDB.
-        await deletePendingSale(entry.localId);
-
-        onSuccess(entry.localId, data.id);
+        await db.pending_sales.put({
+          ...entry,
+          attempts,
+          lastError: message,
+          failed: permanent,
+          nextAttemptAt: permanent
+            ? undefined
+            : new Date(Date.now() + backoffMs(attempts)).toISOString(),
+        });
+        onError(entry.localId, message);
       } catch (error) {
         console.error(
           `[offline-queue] Error sincronizando ${entry.localId}:`,
@@ -201,13 +241,49 @@ async function flushQueueUnlocked(
   }
 }
 
+/** Operaciones y ventas que el servidor rechazo y esperan una decision del usuario. */
+export async function getFailedItems(): Promise<FailedOp[]> {
+  const ops = await getFailedOps();
+  const sales = (await getPendingSales())
+    .filter((entry) => entry.failed)
+    .map<FailedOp>((entry) => ({
+      id: entry.localId,
+      type: "sale",
+      message: `Venta ${entry.localId.slice(-6)} rechazada: ${entry.lastError ?? "error desconocido"}`,
+    }));
+  return [...sales, ...ops];
+}
+
+/** Quita los errores guardados (ventas y operaciones) para reintentar desde cero. */
+export async function clearQueueErrors(): Promise<void> {
+  await clearOpErrors();
+  const db = await openDb();
+  for (const entry of await db.pending_sales.toArray()) {
+    if (entry.failed || entry.lastError || entry.nextAttemptAt) {
+      const { failed: _f, lastError: _l, nextAttemptAt: _n, ...rest } = entry;
+      void _f;
+      void _l;
+      void _n;
+      await db.pending_sales.put(rest);
+    }
+  }
+}
+
+/** Descarta una venta rechazada: sale de la cola y queda marcada como descartada en el historial local. */
+export async function discardFailedSale(localId: string): Promise<void> {
+  const sale = await getLocalSale(localId);
+  if (sale) await saveLocalSale({ ...sale, local_status: "failed" });
+  await deletePendingSale(localId);
+}
+
 /**
  * Vacia la cola (productos, ventas y corte de caja). Segura para llamarse
  * desde la pagina y desde el Service Worker a la vez gracias a Web Locks.
  */
 export async function flushQueue(
   onSuccess: (localId: string, saleId: string) => void,
-  onError: (localId: string, error: string) => void
+  onError: (localId: string, error: string) => void,
+  options: { force?: boolean } = {}
 ): Promise<void> {
-  await withFlushLock(() => flushQueueUnlocked(onSuccess, onError));
+  await withFlushLock(() => flushQueueUnlocked(onSuccess, onError, options.force));
 }

@@ -1,12 +1,16 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { flushQueue, getPendingSales } from "@/lib/offline-queue";
 import {
-  clearOpErrors,
+  clearQueueErrors,
+  discardFailedSale,
+  flushQueue,
+  getFailedItems,
+  getPendingSales,
+} from "@/lib/offline-queue";
+import {
   countPendingOps,
   discardOp,
-  getFailedOps,
   takeNotices,
   type FailedOp,
 } from "@/lib/offline-ops";
@@ -22,7 +26,7 @@ export function OfflineBanner() {
     try {
       const [sales, ops] = await Promise.all([getPendingSales(), countPendingOps()]);
       setPending(sales.length + ops);
-      setFailed(await getFailedOps());
+      setFailed(await getFailedItems());
 
       // Avisos de "ultima escritura gana" dejados por la sincronizacion.
       for (const message of await takeNotices()) toast.warning(message, { duration: 12000 });
@@ -31,7 +35,7 @@ export function OfflineBanner() {
     }
   }, []);
 
-  const syncNow = useCallback(async () => {
+  const syncNow = useCallback(async (force = false) => {
     if (!navigator.onLine || syncing) return;
     setSyncing(true);
     let failed = 0;
@@ -40,7 +44,8 @@ export function OfflineBanner() {
         () => {},
         () => {
           failed++;
-        }
+        },
+        { force }
       );
       if (failed > 0) toast.error("Algunas operaciones no se pudieron sincronizar.");
       else toast.success("Sincronización completada.");
@@ -84,14 +89,15 @@ export function OfflineBanner() {
   }, []);
 
   async function retryFailed() {
-    await clearOpErrors();
-    await syncNow();
+    await clearQueueErrors();
+    await syncNow(true);
   }
 
   async function discardFirstFailed() {
     if (!failed[0]) return;
     if (!confirm("¿Descartar esta operación? El cambio hecho sin conexión se perderá.")) return;
-    await discardOp(failed[0].id);
+    if (failed[0].type === "sale") await discardFailedSale(failed[0].id);
+    else await discardOp(failed[0].id);
     void refreshPending();
   }
 
@@ -126,7 +132,7 @@ export function OfflineBanner() {
         {pending} operación{pending === 1 ? "" : "es"} pendiente{pending === 1 ? "" : "s"} de sincronizar
         <button
           type="button"
-          onClick={() => void syncNow()}
+          onClick={() => void syncNow(true)}
           disabled={syncing}
           className="underline underline-offset-2 disabled:opacity-60"
         >

@@ -3,17 +3,34 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { supabase } from "@/lib/supabase/server";
 import { deviceCookieOptions } from "@/lib/auth";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 // POST /api/setup — handles both first-time store setup and subsequent device registration
 export async function POST(req: NextRequest) {
   try {
+    // Freno a la fuerza bruta del codigo de acceso (por IP, en memoria de la instancia).
+    const limit = rateLimit(`setup:${clientIp(req)}`, 10, 10 * 60 * 1000);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: "Demasiados intentos. Espera unos minutos." },
+        { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } }
+      );
+    }
+
     const body = await req.json();
     const { access_code, name } = body as {
       access_code: string;
       name: string;
     };
 
-    if (!access_code || !name) {
+    if (
+      typeof access_code !== "string" ||
+      typeof name !== "string" ||
+      !access_code ||
+      !name.trim() ||
+      name.length > 80 ||
+      access_code.length > 200
+    ) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
@@ -27,6 +44,12 @@ export async function POST(req: NextRequest) {
     const isFirstSetup = !config?.setup_complete;
 
     if (isFirstSetup) {
+      if (access_code.length < 6) {
+        return NextResponse.json(
+          { error: "El código de acceso debe tener al menos 6 caracteres." },
+          { status: 400 }
+        );
+      }
       // First-time setup: create store config with provided access code
       const hashedCode = await bcrypt.hash(access_code, 10);
       await supabase.from("store_config").upsert({
@@ -48,7 +71,7 @@ export async function POST(req: NextRequest) {
     const { data: device, error: deviceErr } = await supabase
       .from("devices")
       .insert({
-        name,
+        name: name.trim(),
         device_token: token,
         is_active: true,
         registered_at: new Date().toISOString(),

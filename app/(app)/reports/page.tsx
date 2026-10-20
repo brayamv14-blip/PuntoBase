@@ -26,6 +26,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { getAllLocalSales, type LocalSale } from "@/lib/local-sales";
+import { localSalesForDay, localTotals } from "@/lib/local-sales-view";
+import { LocalReceipt } from "@/components/receipt/LocalReceipt";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   formatCurrency,
   formatDateTime,
@@ -86,6 +90,9 @@ export default function ReportsPage() {
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [adjustments, setAdjustments] = useState<AdjustmentRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [localSales, setLocalSales] = useState<LocalSale[]>([]);
+  const [offlineData, setOfflineData] = useState(false);
+  const [localReceipt, setLocalReceipt] = useState<LocalSale | null>(null);
 
   const [salesSearch, setSalesSearch] = useState("");
   const [paymentFilter, setPaymentFilter] = useState<
@@ -94,6 +101,17 @@ export default function ReportsPage() {
   const [expenseSearch, setExpenseSearch] = useState("");
   const [stockSearch, setStockSearch] = useState("");
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
+
+  const loadLocal = useCallback(
+    async (includeSynced: boolean) => {
+      try {
+        setLocalSales(localSalesForDay(await getAllLocalSales(), date, includeSynced));
+      } catch {
+        setLocalSales([]);
+      }
+    },
+    [date]
+  );
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -135,17 +153,24 @@ export default function ReportsPage() {
       setSales(salesRes.data ?? []);
       setExpenses(expRes.items ?? []);
       setAdjustments(Array.isArray(adjRes) ? adjRes : []);
+      setOfflineData(false);
+      await loadLocal(false);
     } catch (error) {
       console.error("Error al cargar los reportes:", error);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "No se pudieron cargar los reportes."
+
+      // Sin conexion o con el servidor caido: se muestran las ventas guardadas en este dispositivo.
+      setSales([]);
+      setExpenses([]);
+      setAdjustments([]);
+      setOfflineData(true);
+      await loadLocal(true);
+      toast.warning(
+        "Sin conexión con el servidor: se muestran las ventas guardadas en este dispositivo."
       );
     } finally {
       setLoading(false);
     }
-  }, [date]);
+  }, [date, loadLocal]);
 
   useEffect(() => {
     void loadAll();
@@ -266,9 +291,20 @@ export default function ReportsPage() {
             </Select>
           </div>
 
+          {offlineData && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
+              Datos locales (sin conexión). Gastos, ajustes y ventas de otros dispositivos
+              aparecerán al reconectar.
+            </div>
+          )}
+
+          {localSales.length > 0 && (
+            <LocalSalesSection sales={localSales} offline={offlineData} onOpen={setLocalReceipt} />
+          )}
+
           {loading && <LoadingSkeleton />}
 
-          {!loading && filteredSales.length === 0 && (
+          {!loading && filteredSales.length === 0 && localSales.length === 0 && (
             <p className="text-center text-muted-foreground py-8">
               No hay ventas registradas en este periodo.
             </p>
@@ -394,11 +430,67 @@ export default function ReportsPage() {
           ))}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!localReceipt} onOpenChange={(open) => !open && setLocalReceipt(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Comprobante</DialogTitle>
+          </DialogHeader>
+          {localReceipt && <LocalReceipt sale={localReceipt} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 // ── Tarjeta de venta con detalle desplegable ──────────────────────────────────
+
+function LocalSalesSection({
+  sales,
+  offline,
+  onOpen,
+}: {
+  sales: LocalSale[];
+  offline: boolean;
+  onOpen: (sale: LocalSale) => void;
+}) {
+  const totals = localTotals(sales);
+  return (
+    <div className="rounded-xl border p-3 space-y-2">
+      <p className="text-sm font-semibold">
+        {offline ? "Ventas de este dispositivo" : "Pendientes de sincronizar"} ({totals.count})
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Efectivo {formatCurrency(totals.cash)} · Transferencia confirmada{" "}
+        {formatCurrency(totals.transferPaid)} · Transferencia pendiente{" "}
+        {formatCurrency(totals.transferPending)}
+      </p>
+      {sales.map((sale) => (
+        <button
+          key={sale.id}
+          type="button"
+          onClick={() => onOpen(sale)}
+          className="w-full text-left bg-card border rounded-lg p-2 flex items-center justify-between gap-2"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-medium truncate">{formatCurrency(sale.total)}</span>
+            <span className="block text-xs text-muted-foreground truncate">
+              {formatDateTime(sale.created_at)} ·{" "}
+              {sale.payment_method === "cash" ? "Efectivo" : "Transferencia"}
+            </span>
+          </span>
+          <Badge variant="outline">
+            {sale.local_status === "pending"
+              ? "Pendiente de sincronizar"
+              : sale.local_status === "failed"
+                ? "Descartada"
+                : "Sincronizada"}
+          </Badge>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function SaleCard({
   sale,

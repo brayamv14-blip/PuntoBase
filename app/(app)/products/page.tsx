@@ -16,6 +16,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { applyPendingSalesToCatalog } from "@/lib/offline-stock";
 import { formatCurrency } from "@/lib/utils";
 import { useCart } from "@/hooks/useCart";
 import Link from "next/link";
@@ -97,7 +98,8 @@ export default function ProductsPage() {
         throw new Error("La respuesta de productos no es válida.");
       }
 
-      const productsData = data as ProductWithVariants[];
+      // Las ventas hechas sin conexion y aun no sincronizadas siguen descontando existencias.
+      const productsData = await applyPendingSalesToCatalog(data as ProductWithVariants[]);
 
       setProducts(productsData);
 

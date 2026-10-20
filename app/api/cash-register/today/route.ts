@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
 import { getYesterdayOpeningBalance } from "@/lib/cash-register";
+import { computeCashCut, sumAmounts } from "@/lib/cash-math";
 import { dayEndISO, dayStartISO, todayDateString } from "@/lib/utils";
 
 export async function GET() {
@@ -71,10 +72,15 @@ export async function GET() {
       .lte("created_at", dateEnd),
   ]);
 
-  const cashSalesTotal = (salesData as { total: number }[] | null)?.reduce((s, r) => s + Number(r.total), 0) ?? 0;
-  const expensesTotal = (expensesData as { amount: number }[] | null)?.reduce((s, r) => s + Number(r.amount), 0) ?? 0;
-  const openingBalance = register?.opening_balance ?? 0;
-  const expectedCash = openingBalance + cashSalesTotal - expensesTotal;
+  const cashSalesTotal = sumAmounts(salesData, "total");
+  const expensesTotal = sumAmounts(expensesData, "amount");
+  const openingBalance = Number(register?.opening_balance ?? 0);
+  const { expectedCash } = computeCashCut({
+    openingBalance,
+    cashSales: cashSalesTotal,
+    expenses: expensesTotal,
+    actualCash: 0,
+  });
 
   return NextResponse.json({
     date: dateStr,

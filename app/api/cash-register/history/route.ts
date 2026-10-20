@@ -5,10 +5,11 @@ import { getDeviceFromCookies } from "@/lib/auth";
 export async function GET(req: NextRequest) {
   try {
     const device = await getDeviceFromCookies();
+    if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
-    const limit = parseInt(searchParams.get("limit") ?? "30");
-    const offset = parseInt(searchParams.get("offset") ?? "0");
+    const limit = Math.max(1, Math.min(parseInt(searchParams.get("limit") ?? "30", 10) || 30, 200));
+    const offset = Math.max(0, parseInt(searchParams.get("offset") ?? "0", 10) || 0);
 
     const { data, error, count } = await supabase
       .from("cash_register")

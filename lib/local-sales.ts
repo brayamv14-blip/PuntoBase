@@ -11,7 +11,7 @@ export type LocalSale = Sale & {
   items: SaleItem[];
   customer: Customer | null;
   device: null;
-  local_status: "pending" | "synced";
+  local_status: "pending" | "synced" | "failed";
   server_sale_id: string | null;
 };
 

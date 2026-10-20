@@ -21,6 +21,7 @@ import { getStockStatus } from "@/lib/stock-status";
 import { getCachedProducts } from "@/lib/catalog-cache";
 import { useCart } from "@/hooks/useCart";
 import { apiFetch } from "@/lib/api";
+import { decrementCachedStock } from "@/lib/offline-stock";
 import {
   enqueueSale,
   flushQueue,
@@ -168,16 +169,28 @@ useEffect(() => {
     subtotal: number,
     total: number
   ) {
+    // La fecha en que ocurrio la venta viaja con ella: al sincronizar conserva su dia y hora reales.
+    const createdAt = new Date().toISOString();
+    const stamped: CreateSaleRequest = { ...payload, created_at: createdAt };
+
     // Guardar primero el comprobante completo en IndexedDB.
     const localSale = await createLocalSaleSnapshot(
       localId,
-      payload,
+      stamped,
       subtotal,
-      total
+      total,
+      createdAt
     );
 
     // Después registrar la venta para sincronizarla con el servidor.
-    await enqueueSale(payload, localId);
+    await enqueueSale(stamped, localId);
+
+    // Descontar el inventario local para no sobrevender mientras no hay sincronizacion.
+    try {
+      await decrementCachedStock(stamped.items);
+    } catch (error) {
+      console.warn("No se pudo actualizar el inventario local:", error);
+    }
 
     // Mostrar el comprobante sin navegar a otra ruta.
     cart.clear();

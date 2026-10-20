@@ -32,7 +32,7 @@ const withPWA = withPWAInit({
       },
       {
         urlPattern:
-          /\/api\/(products|categories|customers)(?:\/|$|\?)/,
+          /\/api\/(products|categories)(?:\/|$|\?)/,
         handler: "StaleWhileRevalidate",
         options: {
           cacheName: "api-cache",
@@ -49,6 +49,25 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["@react-pdf/renderer"],
   turbopack: {},
   allowedDevOrigins: ["192.168.1.89"],
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // La camara (escaner) solo para este origen.
+          { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=()" },
+        ],
+      },
+      {
+        // El Service Worker nunca debe quedar en la cache HTTP: asi las versiones nuevas se instalan.
+        source: "/sw.js",
+        headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
+      },
+    ];
+  },
 };
 
 export default withPWA(nextConfig);

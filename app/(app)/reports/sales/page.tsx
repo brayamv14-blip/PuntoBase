@@ -24,6 +24,7 @@ interface ReportSale {
   sale_number: string | null;
   total: number;
   payment_method: string;
+  payment_status?: string;
   created_at: string;
 }
 
@@ -33,6 +34,8 @@ interface SalesReport {
   total_revenue: number;
   cash_revenue: number;
   transfer_revenue: number;
+  pending_transfer_revenue?: number;
+  pending_transfer_count?: number;
   transaction_count: number;
   sales: ReportSale[];
 }
@@ -196,6 +199,22 @@ export default function ReportsSalesPage() {
                 </p>
               </CardContent>
             </Card>
+
+            {(data.pending_transfer_count ?? 0) > 0 && (
+              <Card className="col-span-2">
+                <CardHeader className="pb-1 pt-3 px-3">
+                  <CardTitle className="text-xs text-muted-foreground">
+                    Transferencias pendientes de confirmar (no incluidas arriba)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-3 pb-3">
+                  <p className="font-bold">
+                    {formatCurrency(data.pending_transfer_revenue ?? 0)} ·{" "}
+                    {data.pending_transfer_count}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           <Card>
