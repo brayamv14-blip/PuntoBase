@@ -15,6 +15,8 @@ export interface UniqueRule {
 export class FakeDb {
   tables: Record<string, Row[]> = {};
   unique: UniqueRule[] = [];
+  /** Valores por defecto de columnas (como los DEFAULT de SQL), por tabla. */
+  defaults: Record<string, Row> = {};
   private seq = 0;
   /** Para provocar fallos: devuelve un error y la operacion no se aplica. */
   failOn: ((table: string, op: string) => Err) | null = null;
@@ -163,7 +165,7 @@ class Query implements PromiseLike<{ data: unknown; error: Err; count?: number |
     if (this.op === "insert" || this.op === "upsert") {
       const list = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       for (const input of list) {
-        const row: Row = { id: this.db.uuid(), created_at: new Date().toISOString(), ...input };
+        const row: Row = { id: this.db.uuid(), created_at: new Date().toISOString(), ...(this.db.defaults[this.table] ?? {}), ...input };
         if (this.op === "upsert" && this.onConflict) {
           const existing = all.find((r) => r[this.onConflict!] === input[this.onConflict!]);
           if (existing) {

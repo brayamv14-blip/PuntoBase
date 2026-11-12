@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { enqueueOp } from "@/lib/offline-ops";
+import { useIsAdmin } from "@/contexts/RoleContext";
 import { formatCurrency, todayDateString } from "@/lib/utils";
 
 interface RegisterData {
@@ -30,9 +31,13 @@ interface RegisterData {
   transfer_paid_total?: number;
   transfer_pending_total?: number;
   transfer_pending_count?: number;
+  cash_refunds_total?: number;
+  layaway_cash_in_total?: number;
+  layaway_cash_out_total?: number;
 }
 
 export default function EodPage() {
+  const isAdmin = useIsAdmin();
   const [data, setData] = useState<RegisterData | null>(null);
   const [actualCash, setActualCash] = useState("");
   const [notes, setNotes] = useState("");
@@ -198,6 +203,27 @@ export default function EodPage() {
             </span>
           </div>
 
+          {(data.layaway_cash_in_total ?? 0) > 0 && (
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">+ Abonos de apartados en efectivo</span>
+              <span className="font-medium text-green-600">+{formatCurrency(data.layaway_cash_in_total ?? 0)}</span>
+            </div>
+          )}
+
+          {(data.cash_refunds_total ?? 0) > 0 && (
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">− Devoluciones en efectivo</span>
+              <span className="font-medium text-red-600">−{formatCurrency(data.cash_refunds_total ?? 0)}</span>
+            </div>
+          )}
+
+          {(data.layaway_cash_out_total ?? 0) > 0 && (
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">− Reembolsos de apartados</span>
+              <span className="font-medium text-red-600">−{formatCurrency(data.layaway_cash_out_total ?? 0)}</span>
+            </div>
+          )}
+
           <div className="flex justify-between gap-3">
             <span className="text-muted-foreground">
               − Gastos del día
@@ -274,7 +300,13 @@ export default function EodPage() {
         </CardContent>
       </Card>
 
-      {!data.is_closed && (
+      {!data.is_closed && !isAdmin && (
+        <div className="bg-muted/50 border rounded-xl p-3 text-sm text-muted-foreground" role="note">
+          El corte de caja solo lo registra un administrador. Aquí puedes consultar el efectivo esperado.
+        </div>
+      )}
+
+      {!data.is_closed && isAdmin && (
         <form
           onSubmit={handleSubmit}
           className="bg-card border rounded-xl p-4 space-y-3"

@@ -1,0 +1,13 @@
+-- Reversion de la migracion 6. Hazla solo si es imprescindible y con respaldo.
+-- Las tablas nuevas contienen informacion de negocio: exportala antes (Ajustes -> Respaldo).
+-- DROP TABLE IF EXISTS layaway_payments, layaway_items, layaways;
+-- DROP TABLE IF EXISTS sale_return_items, sale_returns;
+-- DROP TABLE IF EXISTS audit_log;
+-- ALTER TABLE devices DROP CONSTRAINT IF EXISTS devices_role_check;
+-- ALTER TABLE devices DROP COLUMN IF EXISTS role;
+-- Las columnas cost, unit_cost y refunded_qty son inocuas y se conservan.
+-- Antes de restaurar el CHECK de stock_adjustments, convierte o respalda las filas 'layaway'/'layaway_release':
+-- ALTER TABLE stock_adjustments DROP CONSTRAINT IF EXISTS stock_adjustments_adjustment_type_check;
+-- ALTER TABLE stock_adjustments ADD CONSTRAINT stock_adjustments_adjustment_type_check
+--   CHECK (adjustment_type IN ('manual', 'sale', 'refund'));
+SELECT 'La reversion esta comentada a proposito: descomenta solo lo que necesites.' AS aviso;

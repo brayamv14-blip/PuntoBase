@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
+import { audit } from "@/lib/audit";
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -19,6 +20,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await audit(device, "category.update", "category", id, { name: name.trim() });
     return NextResponse.json(data);
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });
@@ -33,21 +35,24 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params;
 
     // Block delete if any products still use this category
-    const { count } = await supabase
+    // (La columna deleted_at no existe: los productos se dan de baja con is_active = false.)
+    const { count, error: countError } = await supabase
       .from("products")
       .select("id", { count: "exact", head: true })
       .eq("category_id", id)
-      .is("deleted_at", null);
+      .eq("is_active", true);
+    if (countError) return NextResponse.json({ error: "No se pudo verificar la categoría." }, { status: 500 });
 
     if (count && count > 0) {
       return NextResponse.json(
-        { error: `Cannot delete — ${count} product(s) still use this category` },
+        { error: `No se puede eliminar: ${count} producto(s) todavía usan esta categoría.` },
         { status: 409 }
       );
     }
 
     const { error } = await supabase.from("categories").delete().eq("id", id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await audit(device, "category.delete", "category", id);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });

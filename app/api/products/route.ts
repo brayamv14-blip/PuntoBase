@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
 
   let query = supabase
     .from("products")
-    .select("*, category:categories(*), variants:product_variants(*)")
+    .select("*, category:categories(*), variants:product_variants(id, product_id, product_name, size_label, price, stock_qty, low_stock_threshold, created_at, updated_at)")
     .eq("is_active", true)
     .order("name");
 
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     // Altas hechas sin conexion: si ya llegaron (reintento) o si otro dispositivo
     // dio de alta el mismo codigo de barras, se devuelve el producto existente en vez de duplicarlo.
     if (typeof client_id === "string" && client_id) {
-      const FULL = "*, category:categories(*), variants:product_variants(*)";
+      const FULL = "*, category:categories(*), variants:product_variants(id, product_id, product_name, size_label, price, stock_qty, low_stock_threshold, created_at, updated_at)";
       const { data: byClient } = await supabase
         .from("products")
         .select(FULL)
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
         ...(typeof client_id === "string" && client_id ? { client_id } : {}),
         updated_at: new Date().toISOString(),
       })
-      .select("*, category:categories(*), variants:product_variants(*)")
+      .select("*, category:categories(*), variants:product_variants(id, product_id, product_name, size_label, price, stock_qty, low_stock_threshold, created_at, updated_at)")
       .single();
 
     if (error) {
@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
     // Re-fetch with variant included
     const { data: full } = await supabase
       .from("products")
-      .select("*, category:categories(*), variants:product_variants(*)")
+      .select("*, category:categories(*), variants:product_variants(id, product_id, product_name, size_label, price, stock_qty, low_stock_threshold, created_at, updated_at)")
       .eq("id", data.id)
       .single();
 

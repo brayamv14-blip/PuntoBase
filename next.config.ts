@@ -4,7 +4,8 @@ import withPWAInit from "@ducanh2912/next-pwa";
 
 const withPWA = withPWAInit({
   dest: "public",
-  fallbacks: {},
+  // Navegacion sin conexion a una pantalla que nunca se abrio: muestra /offline-ayuda en vez del error del navegador.
+  fallbacks: { document: "/offline-ayuda" },
   customWorkerSrc: "worker",
 
   cacheOnFrontEndNav: true,

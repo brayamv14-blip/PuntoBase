@@ -19,6 +19,7 @@ import {
   PackageX,
 } from "lucide-react";
 import type { CashRegister, Sale, VariantWithProduct } from "@/types";
+import { getCashFlows } from "@/lib/cash-flows";
 import { SalesStats } from "@/components/dashboard/SalesStats";
 import { PushToggle } from "@/components/push/PushToggle";
 import {
@@ -39,7 +40,7 @@ export default async function DashboardPage() {
   const todayStart = dayStartISO(today);
   const todayEnd = dayEndISO(today);
 
-  const [cashRegRes, salesRes, expRes, recentRes, varRes] =
+  const [cashRegRes, salesRes, expRes, recentRes, varRes, flows, retRes] =
     await Promise.all([
       supabase
         .from("cash_register")
@@ -75,6 +76,12 @@ export default async function DashboardPage() {
           "id, size_label, stock_qty, low_stock_threshold, product:products(id, name, track_stock)"
         )
         .limit(200),
+      getCashFlows(todayStart, todayEnd),
+      supabase
+        .from("sale_returns")
+        .select("total_refund, refund_method")
+        .gte("created_at", todayStart)
+        .lte("created_at", todayEnd),
     ]);
 
   const cashRegister = cashRegRes.data as Pick<
@@ -121,13 +128,14 @@ export default async function DashboardPage() {
     (item) => item.stock_qty > 0
   );
 
-  const totalRevenue =
+  // Ingresos netos: ventas cobradas menos devoluciones del dia (la venta original no se toca).
+  const returnsToday = (retRes.data ?? []) as { total_refund: number; refund_method: string }[];
+  const returnsTotal = returnsToday.reduce((sum, r) => sum + Number(r.total_refund), 0);
+  const grossRevenue =
     todaySales?.reduce((sum, sale) => sum + Number(sale.total), 0) ?? 0;
+  const totalRevenue = grossRevenue - returnsTotal;
 
-  const cashRevenue =
-    todaySales
-      ?.filter((sale) => sale.payment_method === "cash")
-      .reduce((sum, sale) => sum + Number(sale.total), 0) ?? 0;
+  const cashRevenue = flows.cashSales - flows.cashRefunds;
 
   const transferRevenue = totalRevenue - cashRevenue;
 
@@ -136,7 +144,8 @@ export default async function DashboardPage() {
     0;
 
   const openingBalance = cashRegister?.opening_balance ?? 0;
-  const cashBalance = openingBalance + cashRevenue - expensesTotal;
+  const cashBalance =
+    openingBalance + cashRevenue + flows.layawayCashIn - flows.layawayCashOut - expensesTotal;
 
   const hasDiscrepancy =
     cashRegister?.discrepancy != null &&
@@ -344,7 +353,7 @@ export default async function DashboardPage() {
                 <p className="font-bold">
                   {formatCurrency(Number(sale.total))}
                 </p>
-                <Badge variant="outline" className="text-[10px]">
+                <Badge variant="outline" className="text-xs">
                   {sale.payment_method === "cash"
                     ? "Efectivo"
                     : "Transferencia"}

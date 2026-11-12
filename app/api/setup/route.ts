@@ -1,3 +1,4 @@
+import { audit } from "@/lib/audit";
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -68,20 +69,34 @@ export async function POST(req: NextRequest) {
 
     // Create device record
     const token = crypto.randomBytes(32).toString("hex");
-    const { data: device, error: deviceErr } = await supabase
+    // El primer dispositivo (configuracion inicial) es administrador; los demas entran como
+    // empleado y un administrador puede ascenderlos en Ajustes.
+    const role = isFirstSetup ? "admin" : "employee";
+    const deviceRow = {
+      name: name.trim(),
+      device_token: token,
+      is_active: true,
+      registered_at: new Date().toISOString(),
+    };
+    let { data: device, error: deviceErr } = await supabase
       .from("devices")
-      .insert({
-        name: name.trim(),
-        device_token: token,
-        is_active: true,
-        registered_at: new Date().toISOString(),
-      })
+      .insert({ ...deviceRow, role })
       .select()
       .single();
+    // Base sin la migracion 6 (columna role inexistente): registrar igual, sin rol.
+    if (deviceErr && /role/i.test(deviceErr.message ?? "")) {
+      ({ data: device, error: deviceErr } = await supabase
+        .from("devices")
+        .insert(deviceRow)
+        .select()
+        .single());
+    }
 
     if (deviceErr || !device) {
       return NextResponse.json({ error: "Failed to register device" }, { status: 500 });
     }
+
+    await audit({ id: device.id, name: device.name, role }, "device.register", "device", device.id, { role });
 
     const cookieOpts = deviceCookieOptions();
     const response = NextResponse.json({

@@ -27,6 +27,11 @@ export default function OfflinePage() {
       <p>
         Cuando recuperes internet, vuelve a abrir PuntoBase.
       </p>
+
+      <p>
+        Las pantallas que ya abriste antes siguen disponibles sin conexión:{" "}
+        <a href="/pos" style={{ color: "#E4572E", fontWeight: 700 }}>ir a Vender</a>.
+      </p>
     </main>
   );
 }

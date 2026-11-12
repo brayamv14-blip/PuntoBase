@@ -30,7 +30,7 @@ export async function getDeviceFromCookies(): Promise<Device | null> {
 export async function getSession(): Promise<DeviceSession | null> {
   const device = await getDeviceFromCookies();
   if (!device) return null;
-  return { id: device.id, name: device.name };
+  return { id: device.id, name: device.name, role: device.role };
 }
 
 export function deviceCookieOptions() {
