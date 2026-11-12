@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase/server";
+import { getCashFlows, expectedFromFlows } from "@/lib/cash-flows";
 import { addDays, dayEndISO, dayStartISO, todayDateString } from "@/lib/utils";
 
 /**
@@ -23,18 +24,8 @@ export async function getYesterdayOpeningBalance(): Promise<number> {
   if (prev.actual_cash != null) return Number(prev.actual_cash);
 
   // EOD was skipped — calculate expected cash for yesterday
-  const yStart = dayStartISO(yDate);
-  const yEnd = dayEndISO(yDate);
-
-  const [{ data: salesData }, { data: expensesData }] = await Promise.all([
-    supabase.from("sales").select("total").eq("payment_method", "cash").gte("created_at", yStart).lte("created_at", yEnd),
-    supabase.from("expenses").select("amount").gte("created_at", yStart).lte("created_at", yEnd),
-  ]);
-
-  const cashSales = (salesData as { total: number }[] | null)?.reduce((s, r) => s + Number(r.total), 0) ?? 0;
-  const expenses = (expensesData as { amount: number }[] | null)?.reduce((s, r) => s + Number(r.amount), 0) ?? 0;
-
-  return Number(prev.opening_balance ?? 0) + cashSales - expenses;
+  const flows = await getCashFlows(dayStartISO(yDate), dayEndISO(yDate));
+  return expectedFromFlows(Number(prev.opening_balance ?? 0), flows);
 }
 
 /**

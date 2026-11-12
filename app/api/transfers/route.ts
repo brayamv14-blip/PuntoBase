@@ -1,3 +1,4 @@
+import { audit } from "@/lib/audit";
 import { after, NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
@@ -60,7 +61,10 @@ export async function POST(req: NextRequest) {
       if (!data) {
         return NextResponse.json({ error: "Venta no encontrada o ya resuelta" }, { status: 404 });
       }
-      after(() => notifyTransferResolved(data.id, Number(data.total), "confirmed", device.id));
+      after(async () => {
+        await notifyTransferResolved(data.id, Number(data.total), "confirmed", device.id);
+        await audit(device, "transfer.confirm", "sale", data.id, { total: Number(data.total) });
+      });
       return NextResponse.json({ id: data.id, payment_status: "paid" });
     }
 
@@ -91,6 +95,7 @@ export async function POST(req: NextRequest) {
       const changes = await restockSale(sale.id, sale.sale_number, device.id);
       after(async () => {
         await notifyTransferResolved(sale.id, Number(sale.total), "rejected", device.id);
+        await audit(device, "transfer.reject", "sale", sale.id, { total: Number(sale.total), reason });
         await notifyStockChanges(changes, device.id);
       });
       return NextResponse.json({ id: sale.id, payment_status: "rejected", restocked: changes.length });

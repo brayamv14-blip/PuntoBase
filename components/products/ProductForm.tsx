@@ -42,6 +42,10 @@ export function ProductForm({ product }: ProductFormProps) {
     return [{ tempId: "default-new", size_label: "", price: 0, stock_qty: 0, low_stock_threshold: 5 }];
   });
   const [saving, setSaving] = useState(false);
+  // Costo por variante (solo administrador; el servidor responde 403 a empleados y el campo se oculta).
+  const [costs, setCosts] = useState<Record<string, string>>({});
+  const [originalCosts, setOriginalCosts] = useState<Record<string, string>>({});
+  const [canSeeCost, setCanSeeCost] = useState(false);
 
   // Guarda el inventario original para registrar los ajustes al editar
   const [originalStockMap] = useState<Map<string, number>>(() => {
@@ -59,6 +63,26 @@ export function ProductForm({ product }: ProductFormProps) {
 
   const namedVariants = variants.filter((v) => (v.size_label ?? "") !== "");
   const hasVariants = namedVariants.length > 0;
+
+  useEffect(() => {
+    const ids = (product?.variants ?? []).map((v) => v.id).filter(Boolean);
+    if (ids.length === 0) {
+      // Producto nuevo: se confirma el rol para mostrar el campo de costo.
+      apiFetch("/api/auth/me").then((r) => r.json()).then((m) => setCanSeeCost(m?.role !== "employee")).catch(() => {});
+      return;
+    }
+    apiFetch(`/api/products/cost?variant_ids=${ids.join(",")}`)
+      .then(async (r) => {
+        if (!r.ok) return;
+        const { data } = await r.json();
+        const map: Record<string, string> = {};
+        for (const row of data ?? []) map[row.id] = row.cost == null ? "" : String(row.cost);
+        setCosts(map);
+        setOriginalCosts(map);
+        setCanSeeCost(true);
+      })
+      .catch(() => {});
+  }, [product]);
 
   useEffect(() => {
     apiFetch("/api/categories").then((r) => r.json()).then(setCategories);
@@ -300,6 +324,19 @@ export function ProductForm({ product }: ProductFormProps) {
         });
       }
 
+      // Costos cambiados (solo variantes ya guardadas).
+      if (canSeeCost) {
+        for (const [vid, value] of Object.entries(costs)) {
+          if (value === (originalCosts[vid] ?? "")) continue;
+          const res = await apiFetch("/api/products/cost", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ variant_id: vid, cost: value === "" ? null : Number(value) }),
+          });
+          if (!res.ok) toast.error("No se pudo guardar un costo.");
+        }
+      }
+
       toast.success(isEdit ? "Producto actualizado correctamente" : "Producto agregado correctamente");
       router.push("/products");
       router.refresh();
@@ -401,10 +438,17 @@ export function ProductForm({ product }: ProductFormProps) {
                   onChange={(e) => updateVariant(v.tempId!, "size_label", e.target.value)} />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Precio (Rp) *</Label>
+                <Label className="text-xs">Precio (MXN) *</Label>
                 <Input type="number" placeholder="0" value={v.price ?? ""}
                   onChange={(e) => updateVariant(v.tempId!, "price", Number(e.target.value))} />
               </div>
+              {canSeeCost && v.id && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Costo (MXN) <span className="text-muted-foreground">(opcional, solo administrador)</span></Label>
+                  <Input type="number" min="0" step="0.01" inputMode="decimal" placeholder="Para calcular ganancia" value={costs[v.id] ?? ""}
+                    onChange={(e) => setCosts((c) => ({ ...c, [v.id as string]: e.target.value }))} />
+                </div>
+              )}
               {trackStock && (
                 <div className="space-y-1">
                   <Label className="text-xs">Cantidad en inventario</Label>

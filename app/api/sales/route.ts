@@ -1,3 +1,5 @@
+import { audit } from "@/lib/audit";
+import { normalizeRole } from "@/lib/permissions";
 import { after, NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
@@ -146,6 +148,8 @@ export async function POST(req: NextRequest) {
       !Number.isFinite(discount_value) ||
       discount_value < 0 ||
       (discount_type === "percent" && discount_value > 100) ||
+      (discount_type === "flat" &&
+        discount_value > items.reduce((a, i) => a + i.unit_price * i.qty, 0)) ||
       (discount_type !== undefined &&
         discount_type !== null &&
         discount_type !== "flat" &&
@@ -192,9 +196,12 @@ export async function POST(req: NextRequest) {
       resolvedCustomerId = customer.id;
     }
 
-    // Validar productos y variantes.
+    // Validar productos y variantes; los precios los manda el cliente pero se verifican aqui.
     // Una venta sincronizada (client_sale_id) ya ocurrio fisicamente: no se rechaza por falta de
     // existencias; se registra, el inventario queda en 0 y se marca para revision.
+    const unitCosts = new Map<string, number | null>();
+    const priceMismatches: string[] = [];
+    const priceOverrides: { item: string; catalog: number; charged: number }[] = [];
     for (const item of items) {
       const { data: product, error: productError } = await supabase
         .from("products")
@@ -211,7 +218,7 @@ export async function POST(req: NextRequest) {
 
       const { data: variant, error: variantError } = await supabase
         .from("product_variants")
-        .select("id, product_id, stock_qty")
+        .select("id, product_id, stock_qty, price, cost")
         .eq("id", item.variant_id!)
         .eq("product_id", item.product_id!)
         .single();
@@ -221,6 +228,27 @@ export async function POST(req: NextRequest) {
           { error: `No se encontró la variante: ${item.description}` },
           { status: 404 }
         );
+      }
+
+      unitCosts.set(item.variant_id!, variant.cost == null ? null : Number(variant.cost));
+      if (Math.round(Number(variant.price) * 100) !== Math.round(item.unit_price * 100)) {
+        if (!isOfflineSync) {
+          // Venta en linea: solo un administrador puede vender a un precio distinto al del catalogo
+          // (queda en la bitacora). Para un empleado el precio debe ser el vigente.
+          if (normalizeRole(device.role) !== "admin") {
+            return NextResponse.json(
+              {
+                error: `El precio de ${item.description} no coincide con el catálogo (${Number(variant.price).toFixed(2)}). Solo un administrador puede cambiar precios; si cambió en el catálogo, actualiza e inténtalo de nuevo.`,
+                code: "PRICE_MISMATCH",
+              },
+              { status: 409 }
+            );
+          }
+          priceOverrides.push({ item: item.description, catalog: Number(variant.price), charged: item.unit_price });
+          continue;
+        }
+        // Venta hecha sin conexion: ya ocurrio fisicamente; se registra y se marca para revision.
+        priceMismatches.push(`${item.description}: cobrado ${item.unit_price}, catálogo ${Number(variant.price)}`);
       }
 
       if (product.track_stock && variant.stock_qty < item.qty && !isOfflineSync) {
@@ -338,7 +366,11 @@ export async function POST(req: NextRequest) {
       throw saleError ?? new Error("No se pudo crear la venta.");
     }
 
-    return await processSaleItems(sale, items, device.id, isOfflineSync);
+    if (priceOverrides.length > 0) {
+      after(() => audit(device, "sale.price_override", "sale", sale!.id, { overrides: priceOverrides }));
+    }
+
+    return await processSaleItems(sale, items, device.id, isOfflineSync, unitCosts, priceMismatches);
   } catch (error) {
     console.error("[sales POST]", error);
     return NextResponse.json(
@@ -352,7 +384,9 @@ async function processSaleItems(
   sale: { id: string; payment_method: string },
   items: CreateSaleRequest["items"],
   deviceId: string,
-  allowShortage = false
+  allowShortage = false,
+  unitCosts: Map<string, number | null> = new Map(),
+  priceMismatches: string[] = []
 ) {
   const now = new Date().toISOString();
 
@@ -373,6 +407,7 @@ async function processSaleItems(
       variant_id: item.variant_id ?? null,
       description: item.description,
       unit_price: item.unit_price,
+      unit_cost: item.variant_id ? (unitCosts.get(item.variant_id) ?? null) : null,
       qty: item.qty,
       line_total: item.unit_price * item.qty,
     }));
@@ -457,11 +492,19 @@ async function processSaleItems(
     await ensureOpenCashRegister();
 
     let attentionNote: string | null = null;
-    if (shortages.length > 0) {
-      attentionNote = `Inventario insuficiente al sincronizar (${shortages.length} artículo${shortages.length === 1 ? "" : "s"})`;
+    if (shortages.length > 0 || priceMismatches.length > 0) {
+      const parts: string[] = [];
+      if (shortages.length > 0) {
+        attentionNote = `Inventario insuficiente al sincronizar (${shortages.length} artículo${shortages.length === 1 ? "" : "s"})`;
+        parts.push(...shortages);
+      }
+      if (priceMismatches.length > 0) {
+        attentionNote = attentionNote ?? "Precio distinto al catálogo al sincronizar";
+        parts.push(...priceMismatches.map((m) => `Precio: ${m}`));
+      }
       await supabase
         .from("sales")
-        .update({ needs_attention: true, attention_note: shortages.join("; ").slice(0, 500) })
+        .update({ needs_attention: true, attention_note: parts.join("; ").slice(0, 500) })
         .eq("id", sale.id);
     }
 

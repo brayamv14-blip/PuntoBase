@@ -54,3 +54,7 @@ AGENTS.md
 /public/workbox-*.js
 /public/worker-*.js
 /public/fallback-*.js
+
+# Playwright
+/test-results/
+/playwright-report/

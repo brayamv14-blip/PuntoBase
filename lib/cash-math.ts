@@ -12,6 +12,12 @@ export interface CashCutInput {
   expenses: number;
   /** Efectivo contado fisicamente. */
   actualCash: number;
+  /** Devoluciones pagadas en efectivo. */
+  cashRefunds?: number;
+  /** Abonos de apartados cobrados en efectivo. */
+  layawayCashIn?: number;
+  /** Reembolsos de apartados pagados en efectivo. */
+  layawayCashOut?: number;
 }
 
 export interface CashCut {
@@ -20,9 +26,19 @@ export interface CashCut {
   discrepancy: number;
 }
 
-/** efectivo esperado = fondo inicial + ventas en efectivo - retiros. */
+/**
+ * efectivo esperado = fondo inicial + ventas en efectivo + abonos de apartados en efectivo
+ *                     - devoluciones en efectivo - reembolsos de apartados - retiros/gastos.
+ */
 export function computeCashCut(input: CashCutInput): CashCut {
-  const expectedCash = round2(input.openingBalance + input.cashSales - input.expenses);
+  const expectedCash = round2(
+    input.openingBalance +
+      input.cashSales +
+      (input.layawayCashIn ?? 0) -
+      (input.cashRefunds ?? 0) -
+      (input.layawayCashOut ?? 0) -
+      input.expenses
+  );
   return { expectedCash, discrepancy: round2(input.actualCash - expectedCash) };
 }
 

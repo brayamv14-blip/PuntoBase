@@ -163,7 +163,7 @@ export default function ExpensesPage() {
           </p>
         </div>
 
-        <p className="font-bold text-red-600 text-right">
+        <p className="font-bold text-red-700 dark:text-red-400 text-right">
           {formatCurrency(total)}
         </p>
       </div>
@@ -188,7 +188,7 @@ export default function ExpensesPage() {
                 </p>
               </div>
 
-              <p className="font-bold text-red-600 flex-shrink-0">
+              <p className="font-bold text-red-700 dark:text-red-400 flex-shrink-0">
                 −{formatCurrency(Number(expense.amount))}
               </p>
             </div>

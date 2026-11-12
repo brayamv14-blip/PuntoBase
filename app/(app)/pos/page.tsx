@@ -20,6 +20,7 @@ import { ScannerButton } from "@/components/scanner/Scanner";
 import { getStockStatus } from "@/lib/stock-status";
 import { getCachedProducts } from "@/lib/catalog-cache";
 import { useCart } from "@/hooks/useCart";
+import { useIsAdmin } from "@/contexts/RoleContext";
 import { apiFetch } from "@/lib/api";
 import { decrementCachedStock } from "@/lib/offline-stock";
 import {
@@ -858,6 +859,7 @@ useEffect(() => {
 
 function CartItemRow({ item }: { item: CartItem }) {
   const cart = useCart();
+  const isAdmin = useIsAdmin();
   const [editingPrice, setEditingPrice] = useState(false);
   const [priceInput, setPriceInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -889,7 +891,7 @@ function CartItemRow({ item }: { item: CartItem }) {
           {item.description}
         </p>
 
-        {item.category_name === "Pakan" ? (
+        {item.category_name === "Pakan" && isAdmin ? (
           editingPrice ? (
             <input
               ref={inputRef}

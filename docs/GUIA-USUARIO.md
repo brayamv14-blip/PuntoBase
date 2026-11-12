@@ -38,3 +38,12 @@
 - Barra roja: el servidor rechazó una operación; puedes **Reintentar** o **Descartar**.
 - Si dos dispositivos editan el mismo producto sin conexión, **gana la última escritura** y la app te avisa qué se sobrescribió.
 - Safari/iOS no permite sincronizar con la app cerrada: abre PuntoBase al recuperar internet.
+
+## Novedades (patch 2)
+
+- **Apartados**: pestaña *Apartados*. Cliente, productos, fecha límite y anticipo; el inventario queda apartado. Abona, entrega (se cobra el saldo) o cancela (solo administrador).
+- **Devoluciones**: en *Reportes*, abre la venta, marca productos, escribe el motivo. La venta no se borra.
+- **Análisis** (administrador): ventas netas, ganancia estimada, comparación, resurtido y exportación a CSV/PDF.
+- **Más**: dispositivos y roles, respaldo, bitácora, ayuda y cerrar sesión.
+- Captura el **costo** de cada producto (Inventario → editar) para ver ganancias.
+

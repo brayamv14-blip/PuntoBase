@@ -2,7 +2,10 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
 import { getYesterdayOpeningBalance } from "@/lib/cash-register";
-import { computeCashCut, parseActualCash, sumAmounts } from "@/lib/cash-math";
+import { computeCashCut, parseActualCash } from "@/lib/cash-math";
+import { getCashFlows } from "@/lib/cash-flows";
+import { audit } from "@/lib/audit";
+import { forbidUnlessAdmin } from "@/lib/guard";
 import { notifyCashDiscrepancy } from "@/lib/push-events";
 import { dayEndISO, dayStartISO, isDateOnly, todayDateString } from "@/lib/utils";
 
@@ -12,6 +15,8 @@ import { dayEndISO, dayStartISO, isDateOnly, todayDateString } from "@/lib/utils
 export async function POST(req: NextRequest) {
   const device = await getDeviceFromCookies();
   if (!device) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const forbidden = forbidUnlessAdmin(device);
+  if (forbidden) return forbidden;
 
   const body = await req.json().catch(() => ({}));
   const { notes, date, client_close_id } = body ?? {};
@@ -62,15 +67,15 @@ export async function POST(req: NextRequest) {
   const dateStart = dayStartISO(dateStr);
   const dateEnd = dayEndISO(dateStr);
 
-  const [{ data: salesData }, { data: expensesData }] = await Promise.all([
-    supabase.from("sales").select("total").eq("payment_method", "cash").gte("created_at", dateStart).lte("created_at", dateEnd),
-    supabase.from("expenses").select("amount").gte("created_at", dateStart).lte("created_at", dateEnd),
-  ]);
+  const flows = await getCashFlows(dateStart, dateEnd);
 
   const { expectedCash, discrepancy } = computeCashCut({
     openingBalance: Number(register.opening_balance ?? 0),
-    cashSales: sumAmounts(salesData, "total"),
-    expenses: sumAmounts(expensesData, "amount"),
+    cashSales: flows.cashSales,
+    cashRefunds: flows.cashRefunds,
+    layawayCashIn: flows.layawayCashIn,
+    layawayCashOut: flows.layawayCashOut,
+    expenses: flows.expenses,
     actualCash,
   });
 
@@ -103,6 +108,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...(current ?? {}), duplicate: true });
   }
 
-  after(() => notifyCashDiscrepancy(Number(discrepancy), `${dateStr}:${closedAt}`));
+  after(async () => {
+    await notifyCashDiscrepancy(Number(discrepancy), `${dateStr}:${closedAt}`);
+    await audit(device, "cash.close", "cash_register", dateStr, { expected: expectedCash, actual: actualCash, discrepancy });
+  });
   return NextResponse.json(data);
 }

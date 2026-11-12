@@ -245,6 +245,7 @@ export default function ReportsPage() {
 
           <Input
             type="date"
+            aria-label="Fecha del reporte"
             value={date}
             onChange={(e) => setDate(e.target.value)}
             className="flex-1 text-center"
@@ -280,7 +281,7 @@ export default function ReportsPage() {
                 setPaymentFilter(v as typeof paymentFilter)
               }
             >
-              <SelectTrigger className="w-32">
+              <SelectTrigger className="w-32" aria-label="Filtrar por forma de pago">
                 <SelectValue placeholder="Pago" />
               </SelectTrigger>
               <SelectContent>
@@ -506,6 +507,8 @@ function SaleCard({
   onViewReceipt: () => void;
 }) {
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [refundReason, setRefundReason] = useState("");
+  const [refundOpId] = useState(() => `ret-${crypto.randomUUID()}`);
   const [refunding, setRefunding] = useState(false);
 
   const items = sale.items ?? [];
@@ -549,14 +552,25 @@ function SaleCard({
 
   async function confirmRefund() {
     if (!checkedItems.length) return;
+    const reason = refundReason.trim();
+    if (reason.length < 3) {
+      toast.error("Indica el motivo de la devolución.");
+      return;
+    }
+    if (!window.confirm(`¿Confirmas la devolución de ${formatCurrency(refundTotal)}? La venta original se conserva.`)) {
+      return;
+    }
 
     setRefunding(true);
 
     try {
-      const res = await apiFetch(`/api/sales/${sale.id}/refund`, {
+      const res = await apiFetch(`/api/returns`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sale_id: sale.id,
+          reason,
+          client_op_id: `${refundOpId}-${[...checkedIds].sort().join("_")}`,
           items: checkedItems.map((item) => ({
             sale_item_id: item.id,
             qty: item.qty - item.refunded_qty,
@@ -574,10 +588,11 @@ function SaleCard({
       }
 
       toast.success(
-        `Devolución realizada: ${formatCurrency(result.refunded_total)}`
+        `Devolución realizada: ${formatCurrency(result.total_refund)}`
       );
 
       setCheckedIds(new Set());
+      setRefundReason("");
       onRefunded();
     } catch (error) {
       console.error("Error al realizar devolución:", error);
@@ -604,7 +619,7 @@ function SaleCard({
               variant={
                 sale.payment_method === "cash" ? "default" : "secondary"
               }
-              className="text-[10px]"
+              className="text-xs"
             >
               {sale.payment_method === "cash"
                 ? "Efectivo"
@@ -612,7 +627,7 @@ function SaleCard({
             </Badge>
 
             {hasAnyRefund && (
-              <Badge className="text-[10px] bg-amber-500 hover:bg-amber-500">
+              <Badge className="text-xs bg-amber-500 hover:bg-amber-500">
                 Con devolución
               </Badge>
             )}
@@ -679,7 +694,7 @@ function SaleCard({
                 </span>
 
                 {fullyRefunded ? (
-                  <span className="text-[10px] text-amber-600 flex-shrink-0">
+                  <span className="text-xs text-amber-600 flex-shrink-0">
                     Devuelto
                   </span>
                 ) : (
@@ -712,6 +727,17 @@ function SaleCard({
           >
             Ver comprobante
           </Button>
+
+          {refundableItems.length > 0 && checkedIds.size > 0 && (
+            <Input
+              aria-label="Motivo de la devolución"
+              placeholder="Motivo de la devolución (obligatorio)"
+              maxLength={300}
+              value={refundReason}
+              onChange={(e) => setRefundReason(e.target.value)}
+              className="mt-2"
+            />
+          )}
 
           {refundableItems.length > 0 && checkedIds.size > 0 && (
             <Button

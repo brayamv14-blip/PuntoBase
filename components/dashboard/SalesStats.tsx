@@ -114,7 +114,7 @@ export async function SalesStats() {
           </div>
           <div className="flex gap-1.5 mt-1">
             {days.map((d) => (
-              <div key={d.key} className="flex-1 text-center text-[10px] text-muted-foreground">
+              <div key={d.key} className="flex-1 text-center text-xs text-muted-foreground">
                 {d.label}
               </div>
             ))}
@@ -140,7 +140,7 @@ export async function SalesStats() {
               </div>
             ))}
           </div>
-          <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">
+          <div className="flex justify-between mt-1 text-xs text-muted-foreground">
             <span>{firstHour}:00</span>
             <span>{lastHour}:00</span>
           </div>

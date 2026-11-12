@@ -17,12 +17,15 @@ export interface Device {
   is_active: boolean;
   registered_at: string;
   last_seen_at: string | null;
+  /** admin | employee (migracion 6). Si falta se trata como admin. */
+  role?: 'admin' | 'employee';
 }
 
 // Device info returned to client (no token exposed)
 export interface DeviceSession {
   id: string;
   name: string;
+  role?: 'admin' | 'employee';
 }
 
 // ─── Categories ──────────────────────────────────────────────────────────────

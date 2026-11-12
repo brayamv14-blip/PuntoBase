@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Download, Share, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -46,7 +46,14 @@ function isIos(): boolean {
  */
 export function PwaSetup() {
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
-  const [showIosHint, setShowIosHint] = useState(false);
+  const [iosDismissed, setIosDismissed] = useState(false);
+  // Solo en el cliente (en el servidor siempre false): evita desajuste de hidratacion.
+  const iosCandidate = useSyncExternalStore(
+    () => () => {},
+    () => isIos() && !isStandalone() && safeGet(DISMISS_KEY) !== "1",
+    () => false
+  );
+  const showIosHint = iosCandidate && !iosDismissed;
 
   useEffect(() => {
     if (isStandalone()) return;
@@ -58,18 +65,36 @@ export function PwaSetup() {
     };
     const onInstalled = () => {
       setInstallEvent(null);
-      setShowIosHint(false);
+      setIosDismissed(true);
       toast.success("PuntoBase instalada en tu dispositivo.");
     };
 
     window.addEventListener("beforeinstallprompt", onPrompt);
     window.addEventListener("appinstalled", onInstalled);
-    if (isIos()) setShowIosHint(true);
 
     return () => {
       window.removeEventListener("beforeinstallprompt", onPrompt);
       window.removeEventListener("appinstalled", onInstalled);
     };
+  }, []);
+
+  // Actualizacion de la PWA: cuando un service worker nuevo toma el control, avisa y deja
+  // que la persona recargue cuando quiera (no recarga sola para no perder un carrito en curso).
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const hadController = !!navigator.serviceWorker.controller;
+    let notified = false;
+    const onChange = () => {
+      if (!hadController || notified) return; // primera instalacion: no es una actualizacion
+      notified = true;
+      toast("Hay una nueva versión de PuntoBase", {
+        description: "Actualiza cuando termines la venta en curso.",
+        duration: Infinity,
+        action: { label: "Actualizar", onClick: () => window.location.reload() },
+      });
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", onChange);
+    return () => navigator.serviceWorker.removeEventListener("controllerchange", onChange);
   }, []);
 
   useEffect(() => {
@@ -96,7 +121,7 @@ export function PwaSetup() {
   function dismiss() {
     safeSet(DISMISS_KEY, "1");
     setInstallEvent(null);
-    setShowIosHint(false);
+    setIosDismissed(true);
   }
 
   async function install() {

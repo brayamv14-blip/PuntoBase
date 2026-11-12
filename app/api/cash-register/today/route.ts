@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
 import { getYesterdayOpeningBalance } from "@/lib/cash-register";
-import { computeCashCut, sumAmounts } from "@/lib/cash-math";
+import { computeCashCut } from "@/lib/cash-math";
+import { getCashFlows } from "@/lib/cash-flows";
 import { dayEndISO, dayStartISO, todayDateString } from "@/lib/utils";
 
 export async function GET() {
@@ -13,7 +14,7 @@ export async function GET() {
   const today = todayDateString();
 
   // Try to find today's register first (open or closed)
-  let { data: register, error: fetchError } = await supabase
+  const { data: existing, error: fetchError } = await supabase
     .from("cash_register")
     .select("*")
     .eq("date", today)
@@ -23,6 +24,7 @@ export async function GET() {
     console.error("cash-register fetch error:", fetchError);
     return NextResponse.json({ error: fetchError.message }, { status: 500 });
   }
+  let register = existing;
 
   // No register for today — create one
   if (!register) {
@@ -58,27 +60,17 @@ export async function GET() {
   const transferPending = transferRows.filter((r) => r.payment_status === "pending");
   const transferPendingTotal = transferPending.reduce((s, r) => s + Number(r.total), 0);
 
-  const [{ data: salesData }, { data: expensesData }] = await Promise.all([
-    supabase
-      .from("sales")
-      .select("total, payment_method")
-      .eq("payment_method", "cash")
-      .gte("created_at", dateStart)
-      .lte("created_at", dateEnd),
-    supabase
-      .from("expenses")
-      .select("amount")
-      .gte("created_at", dateStart)
-      .lte("created_at", dateEnd),
-  ]);
-
-  const cashSalesTotal = sumAmounts(salesData, "total");
-  const expensesTotal = sumAmounts(expensesData, "amount");
+  const flows = await getCashFlows(dateStart, dateEnd);
+  const cashSalesTotal = flows.cashSales;
+  const expensesTotal = flows.expenses;
   const openingBalance = Number(register?.opening_balance ?? 0);
   const { expectedCash } = computeCashCut({
     openingBalance,
-    cashSales: cashSalesTotal,
-    expenses: expensesTotal,
+    cashSales: flows.cashSales,
+    cashRefunds: flows.cashRefunds,
+    layawayCashIn: flows.layawayCashIn,
+    layawayCashOut: flows.layawayCashOut,
+    expenses: flows.expenses,
     actualCash: 0,
   });
 
@@ -86,6 +78,9 @@ export async function GET() {
     date: dateStr,
     opening_balance: openingBalance,
     cash_sales_total: cashSalesTotal,
+    cash_refunds_total: flows.cashRefunds,
+    layaway_cash_in_total: flows.layawayCashIn,
+    layaway_cash_out_total: flows.layawayCashOut,
     transfer_paid_total: transferPaidTotal,
     transfer_pending_total: transferPendingTotal,
     transfer_pending_count: transferPending.length,

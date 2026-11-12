@@ -4,12 +4,17 @@ import { BottomNav } from "@/components/layout/BottomNav";
 import { OfflineBanner } from "@/components/layout/OfflineBanner";
 import { PwaSetup } from "@/components/layout/PwaSetup";
 import { CartProvider } from "@/contexts/CartContext";
+import { RoleProvider } from "@/contexts/RoleContext";
+import { normalizeRole } from "@/lib/permissions";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const device = await getDeviceFromCookies();
   if (!device) redirect("/setup");
 
+  const role = normalizeRole(device.role);
+
   return (
+    <RoleProvider role={role}>
     <CartProvider>
       <div className="min-h-screen flex flex-col pb-20">
         <OfflineBanner />
@@ -18,5 +23,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <BottomNav />
       </div>
     </CartProvider>
+    </RoleProvider>
   );
 }

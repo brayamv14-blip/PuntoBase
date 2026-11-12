@@ -1,3 +1,4 @@
+import { audit } from "@/lib/audit";
 import { after, NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/server";
 import { getDeviceFromCookies } from "@/lib/auth";
@@ -87,7 +88,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "No se pudo registrar el ajuste." }, { status: 500 });
       }
 
-      after(() => notifyStockChanges([{ variantId: variant_id, oldQty, newQty }], device.id));
+      after(async () => {
+        await notifyStockChanges([{ variantId: variant_id, oldQty, newQty }], device.id);
+        await audit(device, "stock.adjust", "product_variant", variant_id, { before: oldQty, after: newQty });
+      });
       return NextResponse.json({ stock_qty: newQty });
     }
 
